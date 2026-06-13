@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.16)
+set (CMAKE_CXX_STANDARD 20)
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+add_definitions(-DARDUINO_USB_MODE=1 -DARDUINO_USB_CDC_ON_BOOT=1)
+project(skink)
+set(ESP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/components/arduino" CACHE PATH "Path to Arduino component")

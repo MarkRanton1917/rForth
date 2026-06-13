@@ -1,0 +1,11 @@
+idf_component_register(
+  SRCS 
+    "main.cpp"
+    "core/ceforth.cpp"
+  INCLUDE_DIRS 
+    "."
+    "core"
+    "platform"
+  REQUIRES 
+    arduino
+)

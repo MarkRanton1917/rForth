@@ -49,35 +49,44 @@ void mem_stat()
 ///  @brief eForth external file loader from Flash memory
 ///         can be called in setup() to become a turn-key system
 ///
-#include <SPIFFS.h>
+#include <LittleFS.h>
+
 void forth_include(const char* fname)
 {
   auto dumb = [](int, const char*) { /* silent output */ };
-  if (!SPIFFS.begin()) {
-    LOGS("Error mounting SPIFFS");
+
+  if (!LittleFS.begin()) {
+    LOGS("Error mounting LittleFS");
     return;
   }
-  File file = SPIFFS.open(fname, "r");
+
+  File file = LittleFS.open(fname, "r");
   if (!file) {
-    LOGS("Error opening file:");
+    LOGS("Error opening file: ");
     LOG(fname);
+    LittleFS.end();
     return;
   }
+
   LOGS("Loading file: ");
   LOG(fname);
   LOGS("...");
+
   while (file.available()) {
     char cmd[256], *p = cmd, c;
-    while ((c = file.read()) != '\n')
-      *p++ = c; // one line a time
+    while ((c = file.read()) != '\n' && p - cmd < 255) {
+      *p++ = c; // one line at a time
+    }
     *p = '\0';
+
     LOGS("\n<< ");
     LOG(cmd); // show bootstrap command
     forth_vm(cmd, dumb);
   }
+
   LOGS("Done loading.\n");
   file.close();
-  SPIFFS.end();
+  LittleFS.end();
 }
 ///
 ///> add ESP32 specific opcodes

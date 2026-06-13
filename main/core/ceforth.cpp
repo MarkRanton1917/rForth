@@ -588,7 +588,6 @@ const Code rom[] = {
       Code* w = find(word());
       if (w) {
         see(w);
-        fout << ENDL;
       }
       else
         throw std::runtime_error("Undefined word");
@@ -873,17 +872,17 @@ void _see(Code* c)
 void see(Code* c)
 {
   if (!c) {
-    fout << "  -> { not found }" << ENDL;
+    fout << "  -> { not found }";
     return;
   }
   if (c->xt) {
-    fout << "  ->{ " << c->desc << "; }" << ENDL;
+    fout << "  ->{ " << c->desc << "; } ";
     return;
   }
   fout << ": " << c->name << " ";
   for (Code* w : c->pf)
     _see(w);
-  fout << ";" << ENDL;
+  fout << "; ";
 }
 
 void words()
@@ -988,7 +987,57 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
 {
   static uint err_cnt = 0;
   bool error_occured = false;
-  auto outer = [&]() {
+
+  auto next_token = [](const string& line, size_t start_pos) -> string {
+    size_t i = start_pos;
+    while (i < line.size() && isspace(line[i]))
+      i++;
+    if (i >= line.size()) return "";
+    size_t j = i;
+    while (j < line.size() && !isspace(line[j]))
+      j++;
+    return line.substr(i, j - i);
+  };
+
+  auto replace = [&](const string& line, const string& idiom, const string& exception_what) -> string {
+    string ret = line;
+    if (exception_what != "Undefined word") {
+      size_t pos = line.find(idiom);
+      if (pos != string::npos)
+        ret.replace(pos, idiom.length(), ">>>" + idiom + "<<<");
+      else
+        ret = ">>>" + idiom + "<<<";
+    }
+    else if (idiom == "see") {
+      size_t pos = line.find("see");
+      if (pos != string::npos) {
+        string nxt = next_token(line, pos + 3);
+        if (!nxt.empty()) {
+          size_t nxt_pos = line.find(nxt, pos + 3);
+          if (nxt_pos != string::npos)
+            ret.replace(nxt_pos, nxt.length(), ">>>" + nxt + "<<<");
+          else
+            ret = ">>>" + nxt + "<<<";
+        }
+        else {
+          ret = line + " >>><<<";
+        }
+      }
+      else {
+        ret = ">>>" + idiom + "<<<";
+      }
+    }
+    else {
+      size_t pos = line.find(idiom);
+      if (pos != string::npos)
+        ret.replace(pos, idiom.length(), ">>>" + idiom + "<<<");
+      else
+        ret = ">>>" + idiom + "<<<";
+    }
+    return ret;
+  };
+
+  auto outer = [&](const string& current_line) {
     string idiom;
     while (fin >> idiom) {
       try {
@@ -997,8 +1046,10 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
       catch (exception& e) {
         err_cnt++;
         error_occured = true;
+        fout << ENDL;
         fout << ":" << err_cnt << ": " << e.what() << ENDL;
-        fout << ">>>" << idiom << "<<<" << ENDL;
+        string marked_line = replace(current_line, idiom, e.what());
+        fout << marked_line << ENDL;
         if (fout_cb && !fout.str().empty()) {
           fout_cb((int)fout.str().length(), fout.str().c_str());
           fout.str("");
@@ -1008,16 +1059,19 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
       }
     }
   };
+
   auto cb = [](int, const char* rst) { cout << rst; };
   fout_cb = hook ? hook : cb;
   istringstream istm(cmd);
   string line;
   fout.str("");
+
   while (getline(istm, line)) {
     fin.clear();
     fin.str(line);
-    outer();
+    outer(line);
   }
+
   if (!error_occured) fout << " ok" << ENDL;
   if (fout_cb && !fout.str().empty()) {
     fout_cb((int)fout.str().length(), fout.str().c_str());

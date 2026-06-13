@@ -1,322 +1,619 @@
 ///
 /// @file
-/// @brief eForth - C++ vector-based object-threaded implementation
+/// @brief eForth - C++ vector-based object-threaded implementation (no TOS)
 ///
 ///====================================================================
-#include <sstream> /// iostream, stringstream
+#include <sstream>
 #include <cstring>
 #include "ceforth.h"
 
 using namespace std;
-///
-///> Forth VM state variables
-///
-FV<Code*> dict; ///< Forth dictionary
-FV<DU> ss; ///< data stack
-FV<DU> rs; ///< return stack
-DU tos = -1; ///< cached top of stack
-bool compile = false; ///< compiling flag
-Code* last; ///< cached dict[-1]
-///
-///> I/O streaming interface
-///
-istringstream fin; ///< forth_in
-ostringstream fout; ///< forth_out
-string pad; ///< string buffers
-void (*fout_cb)(int, const char*); ///< forth output callback functi
-///
-///> macros to reduce verbosity (but harder to single-step debug)
-///
-#define POP()                                                                  \
-    ({                                                                         \
-        DU n = tos;                                                            \
-        tos = ss.pop();                                                        \
-        n;                                                                     \
-    })
-#define PUSH(v) (ss.push(tos), tos = (v))
+
+FV<Code*> dict;
+FV<DU> ss;
+FV<DU> rs;
+bool compile = false;
+Code* last;
+
+istringstream fin;
+ostringstream fout;
+string pad;
+void (*fout_cb)(int, const char*);
+
+#define POP()  (ss.pop())
+#define PUSH(v) (ss.push(v))
 #define BOOL(f) ((f) ? -1 : 0)
-#define VAR(i_w)                                                               \
-    (*(dict[(int)((i_w) & 0xffff)]->pf[0]->q.data() + ((i_w) >> 16)))
+#define VAR(i_w) (*(dict[(int)((UINT(i_w)) & 0xffff)]->pf[0]->q.data() + ((UINT(i_w)) >> 16)))
 #define DICT_PUSH(c) (dict.push(last = (c)))
-#define DICT_POP() (dict.pop(), last = dict[-1])
-#define BRAN_TGT() (dict[-2]->pf[-1]) /* branching target */
-#define BASE (VAR(0)) /* borrow dict[0] to store base (numeric radix) */
-#define STR(i_w)                                                               \
-    (EQ(i_w, UINT(-DU1)) ? pad.c_str()                                         \
-                         : dict[(i_w) & 0xffff]->pf[(i_w) >> 16]->name)
+#define DICT_POP()   (dict.pop(), last = dict[-1])
+#define BRAN_TGT()   (dict[-2]->pf[-1])
+#define BASE (VAR(0))
+#define STR(i_w) (EQ(i_w, UINT(-DU1)) ? pad.c_str() : dict[(UINT(i_w)) & 0xffff]->pf[(UINT(i_w)) >> 16]->name)
 #define UNNEST() throw 0
-///
-///> Forth Dictionary Assembler
-/// @note:
-///    1. Dictionary construction sequence
-///       * Code rom[] in statically build in compile-time
-///       * vector<Code*> dict is populated in forth_init, i.e. first thing in
-///       main()
-///    2. Using __COUNTER__ for array token/index can potetially
-///       make the dictionary static but need to be careful the
-///       potential issue comes with it.
-///    3. a degenerated lambda becomes a function pointer
-///
 
 void _if();
 const Code rom[] = {
-  ///< Forth dictionary
-  CODE("bye", exit(0)), // exit to OS
-  ///
-  /// @defgroup ALU ops
-  /// @{
-  CODE("+", tos += ss.pop()),
-  CODE("-", tos = ss.pop() - tos),
-  CODE("*", tos *= ss.pop()),
-  CODE("/", tos = ss.pop() / tos),
-  CODE("mod", tos = MOD(ss.pop(), tos)),
-  CODE("*/", tos = ss.pop() * ss.pop() / tos),
-  CODE("/mod", DU n = ss.pop(); DU t = tos; DU m = MOD(n, t); ss.push(m); tos = UINT(n / t)),
-  CODE("*/mod", DU2 n = (DU2)ss.pop() * ss.pop(); DU2 t = tos; DU2 m = MOD(n, t); ss.push((DU)m); tos = UINT(n / t)),
-  CODE("and", tos = UINT(tos) & UINT(ss.pop())),
-  CODE("or", tos = UINT(tos) | UINT(ss.pop())),
-  CODE("xor", tos = UINT(tos) ^ UINT(ss.pop())),
-  CODE("abs", tos = ABS(tos)),
-  CODE("negate", tos = -tos),
-  CODE("invert", tos = ~UINT(tos)),
-  CODE("rshift", tos = UINT(ss.pop()) >> UINT(tos)),
-  CODE("lshift", tos = UINT(ss.pop()) << UINT(tos)),
-  CODE("max", DU n = ss.pop(); tos = (tos > n) ? tos : n),
-  CODE("min", DU n = ss.pop(); tos = (tos < n) ? tos : n),
-  CODE("2*", tos *= 2),
-  CODE("2/", tos /= 2),
-  CODE("1+", tos += 1),
-  CODE("1-", tos -= 1),
+  CODE("bye", exit(0)),
+
+  CODE("+",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH(a + b);
+    }),
+  CODE("-",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH(a - b);
+    }),
+  CODE("*",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH(a * b);
+    }),
+  CODE("/",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH(a / b);
+    }),
+  CODE("mod",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH(MOD(a, b));
+    }),
+  CODE("*/",
+    {
+      DU b = POP();
+      DU a = POP();
+      DU c = POP();
+      PUSH(a * b / c);
+    }),
+  CODE("/mod",
+    {
+      DU b = POP();
+      DU a = POP();
+      DU m = MOD(a, b);
+      PUSH(m);
+      PUSH(a / b);
+    }),
+  CODE("*/mod",
+    {
+      DU b = POP();
+      DU a = POP();
+      DU c = POP();
+      DU2 n = (DU2)a * b;
+      DU2 m = MOD(n, c);
+      PUSH((DU)m);
+      PUSH((DU)(n / c));
+    }),
+  CODE("and",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH(UINT(a) & UINT(b));
+    }),
+  CODE("or",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH(UINT(a) | UINT(b));
+    }),
+  CODE("xor",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH(UINT(a) ^ UINT(b));
+    }),
+  CODE("abs",
+    {
+      DU a = POP();
+      PUSH(ABS(a));
+    }),
+  CODE("negate",
+    {
+      DU a = POP();
+      PUSH(-a);
+    }),
+  CODE("invert",
+    {
+      DU a = POP();
+      PUSH(~UINT(a));
+    }),
+  CODE("rshift",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH(UINT(a) >> UINT(b));
+    }),
+  CODE("lshift",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH(UINT(a) << UINT(b));
+    }),
+  CODE("max",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH((a > b) ? a : b);
+    }),
+  CODE("min",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH((a < b) ? a : b);
+    }),
+  CODE("2*",
+    {
+      DU a = POP();
+      PUSH(a * 2);
+    }),
+  CODE("2/",
+    {
+      DU a = POP();
+      PUSH(a / 2);
+    }),
+  CODE("1+",
+    {
+      DU a = POP();
+      PUSH(a + 1);
+    }),
+  CODE("1-",
+    {
+      DU a = POP();
+      PUSH(a - 1);
+    }),
 #if USE_FLOAT
   CODE("int",
-    tos = tos < DU0 ? -DU1 * UINT(-tos) : UINT(tos)), // float to int
-#endif // USE_FLOAT
-  /// @}
-  /// @defgroup Logic ops
-  /// @{
-  CODE("0=", tos = BOOL(ZEQ(tos))),
-  CODE("0<", tos = BOOL(LT(tos, DU0))),
-  CODE("0>", tos = BOOL(GT(tos, DU0))),
-  CODE("=", tos = BOOL(EQ(ss.pop(), tos))),
-  CODE(">", tos = BOOL(GT(ss.pop(), tos))),
-  CODE("<", tos = BOOL(LT(ss.pop(), tos))),
-  CODE("<>", tos = BOOL(!EQ(ss.pop(), tos))),
-  CODE(">=", tos = BOOL(!LT(ss.pop(), tos))),
-  CODE("<=", tos = BOOL(!GT(ss.pop(), tos))),
-  CODE("u<", tos = BOOL(UINT(ss.pop()) < UINT(tos))),
-  CODE("u>", tos = BOOL(UINT(ss.pop()) > UINT(tos))),
-  /// @}
-  /// @defgroup Data Stack ops
-  /// @brief - opcode sequence can be changed below this line
-  /// @{
-  CODE("dup", PUSH(tos)),
-  CODE("drop", tos = ss.pop()), // note: ss.pop() != POP()
-  CODE("swap", DU n = ss.pop(); PUSH(n)),
-  CODE("over", PUSH(ss[-2])),
-  CODE("rot", DU n = ss.pop(); DU m = ss.pop(); ss.push(n); PUSH(m)),
-  CODE("-rot", DU n = ss.pop(); DU m = ss.pop(); PUSH(m); PUSH(n)),
-  CODE("pick", tos = ss[-tos]),
-  CODE("nip", ss.pop()),
-  CODE("?dup", if (tos != DU0) PUSH(tos)),
-  /// @}
-  /// @defgroup Data Stack ops - double
-  /// @{
-  CODE("2dup", PUSH(ss[-2]); PUSH(ss[-2])),
-  CODE("2drop", ss.pop(); tos = ss.pop()),
-  CODE("2swap", DU n = ss.pop(); DU m = ss.pop(); DU l = ss.pop(); ss.push(n); PUSH(l); PUSH(m)),
-  CODE("2over", PUSH(ss[-4]); PUSH(ss[-4])),
-  /// @}
-  /// @defgroup Return Stack ops
-  /// @{
+    {
+      DU a = POP();
+      PUSH(a < DU0 ? -DU1 * UINT(-a) : UINT(a));
+    }),
+#endif
+
+  CODE("0=",
+    {
+      DU a = POP();
+      PUSH(BOOL(ZEQ(a)));
+    }),
+  CODE("0<",
+    {
+      DU a = POP();
+      PUSH(BOOL(LT(a, DU0)));
+    }),
+  CODE("0>",
+    {
+      DU a = POP();
+      PUSH(BOOL(GT(a, DU0)));
+    }),
+  CODE("=",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH(BOOL(EQ(a, b)));
+    }),
+  CODE(">",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH(BOOL(GT(a, b)));
+    }),
+  CODE("<",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH(BOOL(LT(a, b)));
+    }),
+  CODE("<>",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH(BOOL(!EQ(a, b)));
+    }),
+  CODE(">=",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH(BOOL(!LT(a, b)));
+    }),
+  CODE("<=",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH(BOOL(!GT(a, b)));
+    }),
+  CODE("u<",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH(BOOL(UINT(a) < UINT(b)));
+    }),
+  CODE("u>",
+    {
+      DU b = POP();
+      DU a = POP();
+      PUSH(BOOL(UINT(a) > UINT(b)));
+    }),
+
+  CODE("dup",
+    {
+      DU a = POP();
+      PUSH(a);
+      PUSH(a);
+    }),
+  CODE("drop", { POP(); }),
+  CODE("swap",
+    {
+      DU a = POP();
+      DU b = POP();
+      PUSH(a);
+      PUSH(b);
+    }),
+  CODE("over",
+    {
+      DU a = POP();
+      DU b = POP();
+      PUSH(b);
+      PUSH(a);
+      PUSH(b);
+    }),
+  CODE("rot",
+    {
+      DU a = POP();
+      DU b = POP();
+      DU c = POP();
+      PUSH(b);
+      PUSH(a);
+      PUSH(c);
+    }),
+  CODE("-rot",
+    {
+      DU a = POP();
+      DU b = POP();
+      DU c = POP();
+      PUSH(a);
+      PUSH(c);
+      PUSH(b);
+    }),
+  CODE("pick",
+    {
+      DU n = POP();
+      if (n < 0 || n >= (DU)ss.size()) throw runtime_error("pick out of range");
+      DU v = ss[ss.size() - 1 - n];
+      PUSH(v);
+    }),
+  CODE("nip",
+    {
+      DU a = POP();
+      POP();
+      PUSH(a);
+    }),
+  CODE("?dup",
+    {
+      DU a = POP();
+      if (a != DU0) {
+        PUSH(a);
+        PUSH(a);
+      }
+      else
+        PUSH(a);
+    }),
+
+  CODE("2dup",
+    {
+      DU a = POP();
+      DU b = POP();
+      PUSH(b);
+      PUSH(a);
+      PUSH(b);
+      PUSH(a);
+    }),
+  CODE("2drop",
+    {
+      POP();
+      POP();
+    }),
+  CODE("2swap",
+    {
+      DU a = POP();
+      DU b = POP();
+      DU c = POP();
+      DU d = POP();
+      PUSH(c);
+      PUSH(d);
+      PUSH(a);
+      PUSH(b);
+    }),
+  CODE("2over",
+    {
+      DU a = POP();
+      DU b = POP();
+      DU c = POP();
+      DU d = POP();
+      PUSH(c);
+      PUSH(d);
+      PUSH(a);
+      PUSH(b);
+      PUSH(c);
+      PUSH(d);
+    }),
+
   CODE(">r", rs.push(POP())),
   CODE("r>", PUSH(rs.pop())),
   CODE("r@", PUSH(rs[-1])),
-  /// @}
-  /// @defgroup IO ops
-  /// @{
-  CODE("base", PUSH(0)), // dict[0]->pf[0]->q[0] used for base
+
+  CODE("base", PUSH(0)),
   CODE("decimal", fout << setbase(BASE = 10)),
   CODE("hex", fout << setbase(BASE = 16)),
   CODE("bl", PUSH(0x20)),
   CODE("cr", fout << ENDL),
   CODE(".", fout << setbase(BASE) << POP() << " "),
-  CODE(".r", fout << setbase(BASE) << setw(POP()) << POP()),
-  CODE("u.r", fout << setbase(BASE) << setw(POP()) << abs(POP())),
+  CODE(".r",
+    {
+      DU w = POP();
+      DU v = POP();
+      fout << setbase(BASE) << setw(w) << v;
+    }),
+  CODE("u.r",
+    {
+      DU w = POP();
+      DU v = POP();
+      fout << setbase(BASE) << setw(w) << ABS(v);
+    }),
   CODE("key", PUSH(word()[0])),
   CODE("emit", fout << (char)POP()),
   CODE("space", fout << " "),
-  CODE("spaces", fout << setw(POP()) << ""),
-  CODE("type", POP(); U32 i_w = UINT(POP()); fout << STR(i_w)),
-  /// @}
-  /// @defgroup Literal ops
-  /// @{
+  CODE("spaces",
+    {
+      DU n = POP();
+      fout << setw(n) << "";
+    }),
+  CODE("type",
+    {
+      DU len = POP();
+      DU i_w = UINT(POP());
+      string s = STR(i_w);
+      fout << s.substr(0, (size_t)len);
+    }),
+
   IMMD("(", word(')')),
   IMMD(".(", fout << word(')')),
-  IMMD("\\", string s; getline(fin, s, '\n')), // flush input
-  IMMD(".\"", string s = word('"').substr(1); last->append(new Str(s))),
-  IMMD(
-    "s\"", string s = word('"').substr(1);
-    if (compile) { last->append(new Str(s, last->token, last->pf.size())); } else {
-      pad = s; // keep string on pad
-      PUSH(-DU1);
-      PUSH(s.length()); // -1 = pad, len
+  IMMD("\\",
+    {
+      string s;
+      getline(fin, s, '\n');
     }),
-  /// @}
-  /// @defgroup Branching ops
-  /// @brief - if...then, if...else...then
-  ///     dict[-2]->pf[0,1,2,...,-1] as *last
-  ///                              \--->pf[...] if  <--+ merge
-  ///                               \-->p1[...] else   |
-  ///     dict[-1]->pf[...] as *tmp -------------------+
-  /// @{
+  IMMD(".\"",
+    {
+      string s = word('"').substr(1);
+      last->append(new Str(s));
+    }),
+  IMMD("s\"",
+    {
+      string s = word('"').substr(1);
+      if (compile) {
+        last->append(new Str(s, last->token, last->pf.size()));
+      }
+      else {
+        pad = s;
+        PUSH(-DU1);
+        PUSH(s.length());
+      }
+    }),
+
   IMMD("if", last->append(new Bran(_if)); DICT_PUSH(new Tmp())),
-  IMMD("else", Code* b = BRAN_TGT(); b->pf.merge(last->pf); b->stage = 1),
-  IMMD(
-    "then",
-    Code* b = BRAN_TGT();
-    int s = b->stage; ///< branching state
-    if (s == 0) {
-      b->pf.merge(last->pf); /// * if.{pf}.then
-      DICT_POP();
-    } else { /// * else.{p1}.then, or
-      b->p1.merge(last->pf); /// * then.{p1}.next
-      if (s == 1) DICT_POP(); /// * if..else..then
+  IMMD("else",
+    {
+      Code* b = BRAN_TGT();
+      b->pf.merge(last->pf);
+      b->stage = 1;
     }),
-  /// @}
-  /// @defgroup Loops
-  /// @brief  - begin...again, begin...f until, begin...f while...repeat
-  /// @{
-  IMMD("begin",
-    last->append(new Bran(_begin));
-    DICT_PUSH(new Tmp())), /// as branch target
+  IMMD("then",
+    {
+      Code* b = BRAN_TGT();
+      int s = b->stage;
+      if (s == 0) {
+        b->pf.merge(last->pf);
+        DICT_POP();
+      }
+      else {
+        b->p1.merge(last->pf);
+        if (s == 1) DICT_POP();
+      }
+    }),
+
+  IMMD("begin", last->append(new Bran(_begin)); DICT_PUSH(new Tmp())),
   IMMD("while",
-    Code* b = BRAN_TGT();
-    b->pf.merge(last->pf); /// * begin.{pf}.f.while
-    b->stage = 2),
+    {
+      Code* b = BRAN_TGT();
+      b->pf.merge(last->pf);
+      b->stage = 2;
+    }),
   IMMD("repeat",
-    Code* b = BRAN_TGT();
-    b->p1.merge(last->pf);
-    DICT_POP()), /// * while.{p1}.repeat
+    {
+      Code* b = BRAN_TGT();
+      b->p1.merge(last->pf);
+      DICT_POP();
+    }),
   IMMD("again",
-    Code* b = BRAN_TGT();
-    b->pf.merge(last->pf);
-    DICT_POP(); /// * begin.{pf}.again
-    b->stage = 1),
+    {
+      Code* b = BRAN_TGT();
+      b->pf.merge(last->pf);
+      DICT_POP();
+      b->stage = 1;
+    }),
   IMMD("until",
-    Code* b = BRAN_TGT();
-    b->pf.merge(last->pf);
-    DICT_POP()), /// * begin.{pf}.f.until
-  /// @}
-  /// @defgrouop FOR loops
-  /// @brief  - for...next, for...aft...then...next
-  /// @{
-  IMMD("for",
-    last->append(new Bran(_tor));
-    last->append(new Bran(_for));
-    DICT_PUSH(new Tmp())), /// as branch target
+    {
+      Code* b = BRAN_TGT();
+      b->pf.merge(last->pf);
+      DICT_POP();
+    }),
+
+  IMMD("for", last->append(new Bran(_tor)); last->append(new Bran(_for)); DICT_PUSH(new Tmp())),
   IMMD("aft",
-    Code* b = BRAN_TGT();
-    b->pf.merge(last->pf); /// * for.{pf}.aft
-    b->stage = 3),
+    {
+      Code* b = BRAN_TGT();
+      b->pf.merge(last->pf);
+      b->stage = 3;
+    }),
   IMMD("next",
-    Code* b = BRAN_TGT();
-    if (b->stage == 0) b->pf.merge(last->pf); /// * for.{pf}.next
-    else b->p2.merge(last->pf); /// * then.{p2}.next
-    DICT_POP()),
-  /// @}
-  /// @defgrouop DO loops
-  /// @brief  - do...loop, do..leave..loop
-  /// @{
-  IMMD("do",
-    last->append(new Bran(_tor2)); ///< ( limit first -- )
-    last->append(new Bran(_loop));
-    DICT_PUSH(new Tmp())),
+    {
+      Code* b = BRAN_TGT();
+      if (b->stage == 0)
+        b->pf.merge(last->pf);
+      else
+        b->p2.merge(last->pf);
+      DICT_POP();
+    }),
+
+  IMMD("do", last->append(new Bran(_tor2)); last->append(new Bran(_loop)); DICT_PUSH(new Tmp())),
   CODE("i", PUSH(rs[-1])),
   CODE("leave",
-    rs.pop();
-    rs.pop();
-    UNNEST()), /// * exit loop
+    {
+      rs.pop();
+      rs.pop();
+      UNNEST();
+    }),
   IMMD("loop",
-    Code* b = BRAN_TGT();
-    b->pf.merge(last->pf); /// * do.{pf}.loop
-    DICT_POP()),
-  /// @}
-  /// @defgrouop Compiler ops
-  /// @{
-  CODE("exit", UNNEST()), // -- (exit from word)
+    {
+      Code* b = BRAN_TGT();
+      b->pf.merge(last->pf);
+      DICT_POP();
+    }),
+
+  CODE("exit", UNNEST()),
   CODE("[", compile = false),
   CODE("]", compile = true),
   CODE(":",
-    DICT_PUSH(new Code(word())); // create new word
-    compile = true),
+    {
+      DICT_PUSH(new Code(word()));
+      compile = true;
+    }),
   IMMD(";", compile = false),
-  CODE("constant", DICT_PUSH(new Code(word())); Code* w = last->append(new Lit(POP())); w->pf[0]->token = w->token),
-  CODE("variable", DICT_PUSH(new Code(word())); Code* w = last->append(new Var(DU0)); w->pf[0]->token = w->token),
+  CODE("constant",
+    {
+      DICT_PUSH(new Code(word()));
+      DU v = POP();
+      Code* w = last->append(new Lit(v));
+      w->pf[0]->token = w->token;
+    }),
+  CODE("variable",
+    {
+      DICT_PUSH(new Code(word()));
+      Code* w = last->append(new Var(DU0));
+      w->pf[0]->token = w->token;
+    }),
   CODE("immediate", last->immd = 1),
-  /// @}
-  /// @defgroup metacompiler
-  /// @brief - dict is directly used, instead of shield by macros
-  /// @{
-  CODE("exec", dict[POP()]->exec()), // w --
-  CODE("create", DICT_PUSH(new Code(word())); Code* w = last->append(new Var(DU0)); w->pf[0]->token = w->token;
-    w->pf[0]->q.pop()),
-  IMMD("does>",
-    last->append(new Bran(_does));
-    last->pf[-1]->token = last->token), // keep WP
-  CODE("to", // n --
-    Code* w = find(word());
-    if (!w) return;
-    VAR(w->token) = POP()), // update value
-  CODE("is", // w --
-    DICT_PUSH(new Code(word(), false)); // create word
-    int w = POP(); // like this word
-    last->xt = dict[w]->xt; // if primitive
-    last->pf = dict[w]->pf), // or colon word
-  /// @}
-  /// @defgroup Memory Access ops
-  /// @{
-  CODE("@", U32 i_w = UINT(POP()); PUSH(VAR(i_w))), // a -- n
-  CODE("!", U32 i_w = UINT(POP()); VAR(i_w) = POP()), // n a --
-  CODE("+!", U32 i_w = UINT(POP()); VAR(i_w) += POP()),
-  CODE("?", U32 i_w = UINT(POP()); fout << VAR(i_w) << " "),
+
+  CODE("exec", dict[UINT(POP())]->exec()),
+  CODE("create",
+    {
+      DICT_PUSH(new Code(word()));
+      Code* w = last->append(new Var(DU0));
+      w->pf[0]->token = w->token;
+      w->pf[0]->q.pop();
+    }),
+  IMMD("does>", last->append(new Bran(_does)); last->pf[-1]->token = last->token),
+  CODE("to",
+    {
+      Code* w = find(word());
+      if (!w) return;
+      VAR(w->token) = POP();
+    }),
+  CODE("is",
+    {
+      DICT_PUSH(new Code(word(), false));
+      int w = UINT(POP());
+      last->xt = dict[w]->xt;
+      last->pf = dict[w]->pf;
+    }),
+
+  CODE("@",
+    {
+      U32 i_w = UINT(POP());
+      PUSH(VAR(i_w));
+    }),
+  CODE("!",
+    {
+      U32 i_w = UINT(POP());
+      VAR(i_w) = POP();
+    }),
+  CODE("+!",
+    {
+      U32 i_w = UINT(POP());
+      VAR(i_w) += POP();
+    }),
+  CODE("?",
+    {
+      U32 i_w = UINT(POP());
+      fout << VAR(i_w) << " ";
+    }),
   CODE(",", last->pf[0]->q.push(POP())),
-  CODE("cells", { /* for backward compatible */ }), // array index, inc by 1
-  CODE("allot", U32 n = UINT(POP()); // n --
-    for (U32 i = 0; i < n; i++) last->pf[0]->q.push(DU0)),
-  ///> Note:
-  ///>   allot allocate elements in a word's q[] array
-  ///>   to access, both indices to word itself and to q array are needed
-  ///>   'th' a word that compose i_w, a 32-bit value, the 16 high bits
-  ///>   serves as the q index and lower 16 lower bit as word index
-  ///>   so a variable (array with 1 element) can be access as usual
-  ///>
-  CODE("th", U32 i = UINT(POP()) << 16; tos = UINT(tos) | i), // w i -- i_w
-  /// @}
-  /// @defgroup Debug ops
-  /// @{
+  CODE("cells", { /* backward compatible */ }),
+  CODE("allot",
+    {
+      U32 n = UINT(POP());
+      for (U32 i = 0; i < n; i++)
+        last->pf[0]->q.push(DU0);
+    }),
+  CODE("th",
+    {
+      U32 i = UINT(POP()) << 16;
+      DU w = POP();
+      PUSH(UINT(w) | i);
+    }),
+
   CODE("here", PUSH(last->token)),
-  CODE("'", Code* w = find(word()); if (w) PUSH(w->token)),
-  CODE(".s", ss_dump(BASE)), // dump parameter stack
-  CODE("words", words()), // display word lists
-  CODE("see", Code* w = find(word()); if (w) see(w); fout << ENDL),
-  CODE("depth", PUSH(ss.size())), // data stack depth
-  /// @}
-  /// @defgroup OS ops
-  /// @{
-  CODE("mstat", mem_stat()), // display memory stat
-  CODE("ms", PUSH(millis())), // get system clock in msec
-  CODE("rnd", PUSH(RND())), // get a random number
-  CODE("delay", delay(UINT(POP()))), // n -- delay n msec
-  CODE("included", POP(); U32 i_w = UINT(POP()); load(STR(i_w))),
-  CODE("forget", Code* w = find(word()); if (!w) return; int t = max((int)w->token, find("boot")->token + 1);
-    for (int i = dict.size(); i > t; i--) DICT_POP()),
-  CODE("boot", int t = find("boot")->token + 1; for (int i = dict.size(); i > t; i--) DICT_POP()),
+  CODE("'",
+    {
+      Code* w = find(word());
+      if (w) PUSH(w->token);
+    }),
+  CODE(".s", ss_dump(BASE)),
+  CODE("words", words()),
+  CODE("see",
+    {
+      Code* w = find(word());
+      if (w) {
+        see(w);
+        fout << ENDL;
+      }
+      else
+        throw std::runtime_error("Undefined word");
+    }),
+  CODE("depth", PUSH(ss.size())),
+
+  CODE("mstat", mem_stat()),
+  CODE("ms", PUSH(millis())),
+  CODE("rnd", PUSH(RND())),
+  CODE("delay", delay(UINT(POP()))),
+  CODE("included",
+    {
+      POP();
+      U32 i_w = UINT(POP());
+      load(STR(i_w));
+    }),
+  CODE("forget",
+    {
+      Code* w = find(word());
+      if (!w) return;
+      int t = max((int)w->token, find("boot")->token + 1);
+      for (int i = dict.size(); i > t; i--)
+        DICT_POP();
+    }),
+  CODE("boot",
+    {
+      int t = find("boot")->token + 1;
+      for (int i = dict.size(); i > t; i--)
+        DICT_POP();
+    }),
 };
-///====================================================================
-///
-///> Code Class constructors
-///
-Code::Code(const char* s, const char* d, XT fp, U32 a) ///> primitive word
+
+Code::Code(const char* s, const char* d, XT fp, U32 a)
   : name(s),
     desc(d),
     xt(fp),
@@ -324,20 +621,17 @@ Code::Code(const char* s, const char* d, XT fp, U32 a) ///> primitive word
 {
 }
 Code::Code(string s, bool n)
-{ ///< new colon word
-  Code* w = find(s); /// * scan the dictionary
+{
+  Code* w = find(s);
   name = (new string(s))->c_str();
   desc = "";
-  xt = w ? w->xt : NULL;
+  xt = w ? w->xt : nullptr;
   token = n ? dict.size() : 0;
   if (n && w) {
     fout << "reDef?" << ENDL;
   }
 }
-///====================================================================
-///
-///> Primitive Functions
-///
+
 void _str(Code* c)
 {
   if (!c->token)
@@ -361,95 +655,102 @@ void _tor(Code* c)
 }
 void _tor2(Code* c)
 {
-  rs.push(ss.pop());
-  rs.push(POP());
+  DU limit = POP();
+  DU first = POP();
+  rs.push(limit);
+  rs.push(first);
 }
 void _if(Code* c)
 {
-  for (Code* w : (POP() ? c->pf : c->p1))
-    w->exec();
+  if (POP()) {
+    for (Code* w : c->pf)
+      w->exec();
+  }
+  else {
+    for (Code* w : c->p1)
+      w->exec();
+  }
 }
 void _begin(Code* c)
-{ ///> begin.while.repeat, begin.until
-  int b = c->stage; ///< branching state
+{
+  int b = c->stage;
   while (true) {
     for (Code* w : c->pf)
-      w->exec(); /// * begin..
-    if (b == 0 && POP() != 0) break; /// * ..until
-    if (b == 1) continue; /// * ..again
-    if (b == 2 && POP() == 0) break; /// * ..while..repeat
+      w->exec();
+    if (b == 0 && POP() != 0) break;
+    if (b == 1) continue;
+    if (b == 2 && POP() == 0) break;
     for (Code* w : c->p1)
       w->exec();
   }
 }
 void _for(Code* c)
-{ ///> for..next, for..aft..then..next
-  int b = c->stage; /// * kept in register
+{
+  int b = c->stage;
   try {
     do {
       for (Code* w : c->pf)
         w->exec();
-    } while (b == 0 && (rs[-1] -= 1) >= 0); /// * for..next only
-    while (b) { /// * aft
+    } while (b == 0 && (rs[-1] -= 1) >= 0);
+    while (b) {
       for (Code* w : c->p2)
-        w->exec(); /// * then..next
-      if ((rs[-1] -= 1) < 0) break; /// * decrement counter
+        w->exec();
+      if ((rs[-1] -= 1) < 0) break;
       for (Code* w : c->p1)
-        w->exec(); /// * aft..then
+        w->exec();
     }
     rs.pop();
   }
-  catch (...) {
+  catch (int) {
     rs.pop();
-  } // handle EXIT
+  }
 }
+
 void _loop(Code* c)
-{ ///> do..loop
+{
   try {
     do {
       for (Code* w : c->pf)
         w->exec();
-    } while ((rs[-1] += 1) < rs[-2]); // increment counter
+    } while ((rs[-1] += 1) < rs[-2]);
     rs.pop();
     rs.pop();
   }
-  catch (...) {
-  } // handle LEAVE
+  catch (int) {
+  }
 }
 void _does(Code* c)
 {
   bool hit = false;
   for (Code* w : dict[c->token]->pf) {
-    if (hit) last->append(w); // copy rest of pf
+    if (hit) last->append(w);
     if (STRCMP(w->name, "does>") == 0) hit = true;
   }
-  throw 0; // exit caller
+  throw 0;
 }
-///====================================================================
-///
-///> IO functions
-///
+
 string word(char delim)
-{ ///> read next idiom form input stream
+{
   string s;
   delim ? getline(fin, s, delim) : fin >> s;
   return s;
 }
+
 void ss_dump(DU base)
-{ ///> display data stack and ok promt
+{
   char buf[34];
-  auto rdx = [&buf](DU v, int b) { ///> display v by radix
+  auto rdx = [&buf](DU v, int b) -> const char* {
 #if USE_FLOAT
-    DU t, f = modf(v, &t); ///< integral, fraction
-    if (ABS(f) > DU_EPS) { /// * if != 0
+    DU t, f = modf(v, &t);
+    if (ABS(f) > DU_EPS) {
       sprintf(buf, "%0.6g", v);
       return buf;
     }
-#endif // USE_FLOAT
+#endif
     int i = 33;
-    buf[i] = '\0'; /// * C++ can do only 8,10,16
-    int dec = b == 10;
-    U32 n = dec ? UINT(ABS(v)) : UINT(v); ///< handle negative
+    buf[i] = '\0';
+    int dec = (b == 10);
+    U32 n = dec ? UINT(ABS(v)) : UINT(v);
     do {
       U8 d = (U8)MOD(n, b);
       n /= b;
@@ -458,128 +759,144 @@ void ss_dump(DU base)
     if (dec && v < DU0) buf[--i] = '-';
     return &buf[i];
   };
-  ss.push(tos);
+
+  if (ss.empty()) {
+    fout << "-> ok" << ENDL;
+    return;
+  }
   for (DU v : ss) {
     fout << rdx(v, base) << ' ';
   }
-  tos = ss.pop();
   fout << "-> ok" << ENDL;
 }
-void _see(Code* c, int dp)
-{ ///> disassemble a colon word
-  auto pp = [](string s, FV<Code*> v,
-              int dp) { ///> recursive dump with indent
-    int i = dp;
-    if (dp && s != "\t") {
-      fout << ENDL;
-    } ///> newline control
-    while (i--) {
-      fout << "  ";
-    }
-    fout << s; ///> indentation control
-    if (dp < 2)
-      for (Code* w : v)
-        _see(w, dp + 1);
-  };
-  auto pq = [](FV<DU> q) {
-    for (DU i : q)
-      fout << i << (q.size() > 1 ? " " : "");
-  };
-  const FV<Code*> zz = {};
-  string sn(c->name);
-  if (c->is_str) sn = (c->token ? "s\" " : ".\" ") + sn + "\"";
-  pp(sn, c->pf, dp);
-  if (sn == "if") {
-    if (c->stage == 1) pp("else", c->p1, dp);
-    pp("then", zz, dp);
+
+void _see(Code* c)
+{
+  if (!c) return;
+  if (c->xt == _lit) {
+    fout << c->q[0] << " ";
+    return;
   }
-  else if (sn == "begin") {
-    switch (c->stage) {
-    case 0:
-      pp("until", zz, dp);
-      break;
-    case 1:
-      pp("again", zz, dp);
-      break;
-    case 2:
-      pp("while", c->p1, dp);
-      pp("repeat", zz, dp);
-      break;
+  const char* nm = c->name ? c->name : "";
+  if (strcmp(nm, "if") == 0) {
+    fout << "if ";
+    for (Code* w : c->pf)
+      _see(w);
+    if (c->stage == 1 && !c->p1.empty()) {
+      fout << "else ";
+      for (Code* w : c->p1)
+        _see(w);
     }
+    fout << "then ";
+    return;
   }
-  else if (sn == "for") {
+  if (strcmp(nm, "begin") == 0) {
+    fout << "begin ";
+    for (Code* w : c->pf)
+      _see(w);
+    if (c->stage == 2) {
+      fout << "while ";
+      for (Code* w : c->p1)
+        _see(w);
+      fout << "repeat ";
+    }
+    else if (c->stage == 0) {
+      fout << "until ";
+    }
+    else if (c->stage == 1) {
+      fout << "again ";
+    }
+    return;
+  }
+  if (strcmp(nm, "for") == 0) {
+    fout << "for ";
+    for (Code* w : c->pf)
+      _see(w);
     if (c->stage == 3) {
-      pp("aft", c->p1, dp);
-      pp("then", c->p2, dp);
+      fout << "aft ";
+      for (Code* w : c->p1)
+        _see(w);
+      fout << "then ";
+      for (Code* w : c->p2)
+        _see(w);
     }
-    pp("next", zz, dp);
+    fout << "next ";
+    return;
   }
-  else if (sn == "do") {
-    pp("loop", zz, dp);
+  if (strcmp(nm, "do") == 0) {
+    fout << "do ";
+    for (Code* w : c->pf)
+      _see(w);
+    fout << "loop ";
+    return;
   }
-  else
-    pq(c->q);
+  if (nm[0] != '\0' && nm[0] != '\t') {
+    fout << nm << " ";
+  }
 }
+
 void see(Code* c)
 {
-  if (c->xt)
-    fout << "  ->{ " << c->desc << "; }";
-  else {
-    fout << ": ";
-    _see(c, 0);
-    fout << " ;";
+  if (!c) {
+    fout << "  -> { not found }" << ENDL;
+    return;
   }
+  if (c->xt) {
+    fout << "  ->{ " << c->desc << "; }" << ENDL;
+    return;
+  }
+  fout << ": " << c->name << " ";
+  for (Code* w : c->pf)
+    _see(w);
+  fout << ";" << ENDL;
 }
+
 void words()
-{ ///> display word list
+{
   const int WIDTH = 60;
   int x = 0;
   fout << setbase(16) << setfill('0');
   for (Code* w : dict) {
 #if CC_DEBUG > 1
-    fout << setw(4) << w->token << "> " << (UFP)w << ' ' << setw(8) << static_cast<U32>((UFP)w->xt)
-         << (w->is_str ? '"' : ':') << (w->immd ? '*' : ' ') << w->name << "  " << ENDL;
-#else // !CC_DEBUG
+    fout << setw(4) << w->token << "> " << (UFP)w << ' ' << setw(8) << (U32)(UFP)w->xt << (w->is_str ? '"' : ':')
+         << (w->immd ? '*' : ' ') << w->name << "  " << ENDL;
+#else
     fout << "  " << w->name;
     x += (strlen(w->name) + 2);
     if (x > WIDTH) {
       fout << ENDL;
       x = 0;
     }
-#endif // CC_DEBUG
+#endif
   }
   fout << setfill(' ') << setbase(BASE) << ENDL;
 }
+
 void load(const char* fn)
-{ ///> include script from stream
-  void (*cb)(int, const char*) = fout_cb; ///< keep output function
+{
+  void (*cb)(int, const char*) = fout_cb;
   string in;
-  getline(fin, in); ///< keep input buffers
-  fout << ENDL; /// * flush output
-
-  forth_include(fn); /// * send script to VM
-
-  fout_cb = cb; /// * restore output cb
+  getline(fin, in);
+  fout << ENDL;
+  forth_include(fn);
+  fout_cb = cb;
   fin.clear();
-  fin.str(in); /// * restore input
+  fin.str(in);
 }
-///====================================================================
-///
-///> Forth outer interpreter
-///
+
 Code* find(string s)
-{ ///> scan dictionary, last to first
+{
   for (int i = dict.size() - 1; i >= 0; --i) {
     if (STRCMP(s.c_str(), dict[i]->name) == 0) return dict[i];
   }
-  return NULL; /// * word not found
+  return nullptr;
 }
 
 DU parse_number(string idiom)
 {
   const char* cs = idiom.c_str();
   int b = BASE;
-  switch (*cs) { ///> base override
+  switch (*cs) {
   case '%':
     b = 2;
     cs++;
@@ -595,88 +912,78 @@ DU parse_number(string idiom)
     break;
   }
   char* p;
-  errno = 0; ///> clear overflow flag
+  errno = 0;
 #if DU == float
-  DU n = (b == 10) ? static_cast<DU>(strtof(cs, &p)) : static_cast<DU>(strtol(cs, &p, b));
+  DU n = (b == 10) ? strtof(cs, &p) : strtol(cs, &p, b);
 #else
-  DU n = static_cast<DU>(strtol(cs, &p, b));
+  DU n = strtol(cs, &p, b);
 #endif
-  if (errno || *p != '\0') throw runtime_error("");
+  if (errno || *p != '\0') throw runtime_error("Undefined word");
   return n;
 }
 
 void forth_core(string idiom)
 {
-  Code* w = find(idiom); /// * search through dictionary
-  if (w) { /// * word found?
-    if (compile && !w->immd) /// * are we compiling new word?
-      last->append(w); /// * append word ptr to it
+  Code* w = find(idiom);
+  if (w) {
+    if (compile && !w->immd)
+      last->append(w);
     else
-      w->exec(); /// * execute forth word
-
+      w->exec();
     return;
   }
-  DU n = parse_number(idiom); ///< try as a number
-  if (compile) /// * are we compiling new word?
-    last->append(new Lit(n)); /// * append numeric literal to it
+  DU n = parse_number(idiom);
+  if (compile)
+    last->append(new Lit(n));
   else
-    PUSH(n); /// * add value to data stack
-}
-///====================================================================
-///
-///> Forth VM - interface to outside world
-///
-///
-///> setup user variables
-///
-void forth_init()
-{
-  const int sz = (int)(sizeof(rom)) / (sizeof(Code));
-  dict.reserve(sz * 2); /// * pre-allocate vector
-  for (int i = 0; i < sz; i++) { /// * collect Code pointers
-    DICT_PUSH((Code*)&rom[i]);
-  }
-  dict[0]->append(new Var(10)); /// * borrow dict[0] for base
-#if DO_WASM
-  fout << "WASM build" << endl;
-#endif
+    ss.push(n);
 }
 
-int forth_vm(const char* cmd, void (*hook)(int, const char*) = NULL)
+void forth_init()
 {
-  auto outer = []() { ///< outer interpreter
+  const int sz = sizeof(rom) / sizeof(Code);
+  dict.reserve(sz * 2);
+  for (int i = 0; i < sz; ++i) {
+    DICT_PUSH((Code*)&rom[i]);
+  }
+  dict[0]->append(new Var(10));
+}
+
+int forth_vm(const char* cmd, void (*hook)(int, const char*))
+{
+  static uint err_cnt = 0;
+  auto outer = [&]() {
     string idiom;
     while (fin >> idiom) {
       try {
         forth_core(idiom);
-      } ///> single command to Forth core
-#if CC_DEBUG
-      catch (exception& e) { /// * 6% slower?
-        fout << idiom << "? " << e.what() << ENDL;
-#else // !CC_DEBUG
-      catch (...) {
-        fout << idiom << "? " << ENDL;
-#endif // CC_DEBUG
+      }
+      catch (exception& e) {
+        ++err_cnt;
+        fout << ":" << err_cnt << ": " << e.what() << ENDL;
+        fout << ">>>" << idiom << "<<<" << ENDL;
+        if (fout_cb && !fout.str().empty()) {
+          fout_cb((int)fout.str().length(), fout.str().c_str());
+          fout.str("");
+        }
         compile = false;
-        getline(fin, idiom, '\n'); /// * flush to end-of-line
+        getline(fin, idiom, '\n');
       }
     }
   };
   auto cb = [](int, const char* rst) { cout << rst; };
-  fout_cb = hook ? hook : cb; ///> setup callback function
-
-  istringstream istm(cmd); ///< input stream
-  string line; ///< one line of command
-  fout.str(""); ///> clean output buffer
-  while (getline(istm, line)) { /// * fetch line by line
-    fin.clear(); ///> clear input stream error bit if any
-    fin.str(line); ///> feed user command into input stream
-    outer(); /// * call Forth outer interpreter
+  fout_cb = hook ? hook : cb;
+  istringstream istm(cmd);
+  string line;
+  fout.str("");
+  while (getline(istm, line)) {
+    fin.clear();
+    fin.str(line);
+    outer();
   }
   if (!compile) ss_dump(BASE);
-
-  if (fout_cb && fout.str().length()) {
-    fout_cb(fout.str().length(), fout.str().c_str());
+  if (fout_cb && !fout.str().empty()) {
+    fout_cb((int)fout.str().length(), fout.str().c_str());
     fout.str("");
   }
   return 0;

@@ -1,8 +1,7 @@
 ///
 /// eForth - Configuration and Cross Platform macros
 ///
-#ifndef __EFORTH_SRC_CONFIG_H
-#define __EFORTH_SRC_CONFIG_H
+#pragma once
 ///
 /// Benchmark: 10K*10K cycles on desktop (3.2G AMD)
 ///    RANGE_CHECK     0 cut 100ms
@@ -69,14 +68,7 @@ typedef int32_t DU;
 ///@}
 ///@name Multi-platform support
 ///@{
-#if _WIN32 || _WIN64
 #define ENDL "\r\n"
-#else // !(_WIN32 || _WIN64)
-#define ENDL                                                                   \
-    endl;                                                                      \
-    fout_cb(fout.str().length(), fout.str().c_str());                          \
-    fout.str("")
-#endif // _WIN32 || _WIN64
 
 #if (ARDUINO || ESP32)
 #include <Arduino.h>
@@ -138,4 +130,3 @@ typedef int32_t DU;
     LOGX(dict[i].attr);                                                        \
     LOGS("\n")
 ///@}
-#endif // __EFORTH_SRC_CONFIG_H

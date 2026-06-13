@@ -59,6 +59,7 @@ void _if(Code* c);
 void _begin(Code* c);
 void _for(Code* c);
 void _loop(Code* c);
+void _plus_loop(Code* c);
 void _does(Code* c);
 
 string word(char delim = 0);
@@ -152,11 +153,24 @@ struct Bran : Code {
   Bran(XT fp)
     : Code(fp)
   {
-    const char* nm[] = { "if", "begin", "\t", "for", "\t", "do", "does>" };
-    XT xt_arr[] = { _if, _begin, _tor, _for, _tor2, _loop, _does };
-    for (int i = 0; i < (int)(sizeof(nm) / sizeof(const char*)); i++) {
-      if ((uintptr_t)xt_arr[i] == (uintptr_t)fp) name = nm[i];
-    }
+    if (fp == _tor2)
+      name = "do";
+    else if (fp == _loop)
+      name = "loop";
+    else if (fp == _plus_loop)
+      name = "+loop";
+    else if (fp == _tor)
+      name = ">r";
+    else if (fp == _for)
+      name = "for";
+    else if (fp == _if)
+      name = "if";
+    else if (fp == _begin)
+      name = "begin";
+    else if (fp == _does)
+      name = "does>";
+    else
+      name = "";
     is_str = 0;
   }
 };

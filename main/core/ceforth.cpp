@@ -469,8 +469,7 @@ const Code rom[] = {
         b->p2.merge(last->pf);
       DICT_POP();
     }),
-
-  IMMD("do", last->append(new Bran(_tor2)); last->append(new Bran(_loop)); DICT_PUSH(new Tmp())),
+  IMMD("do", last->append(new Bran(_tor2)); last->append(new Bran(nullptr)); DICT_PUSH(new Tmp())),
   CODE("i", PUSH(rs[-1])),
   CODE("leave",
     {
@@ -481,10 +480,19 @@ const Code rom[] = {
   IMMD("loop",
     {
       Code* b = BRAN_TGT();
+      b->xt = _loop;
+      b->name = "loop";
       b->pf.merge(last->pf);
       DICT_POP();
     }),
-
+  IMMD("+loop",
+    {
+      Code* b = BRAN_TGT();
+      b->xt = _plus_loop;
+      b->name = "+loop";
+      b->pf.merge(last->pf);
+      DICT_POP();
+    }),
   CODE("exit", UNNEST()),
   CODE("[", compile = false),
   CODE("]", compile = true),
@@ -655,8 +663,8 @@ void _tor(Code* c)
 }
 void _tor2(Code* c)
 {
-  DU limit = POP();
   DU first = POP();
+  DU limit = POP();
   rs.push(limit);
   rs.push(first);
 }
@@ -719,6 +727,34 @@ void _loop(Code* c)
   catch (int) {
   }
 }
+
+void _plus_loop(Code* c)
+{
+  try {
+    do {
+      for (Code* w : c->pf)
+        w->exec();
+      DU n = POP();
+      DU index = rs[-1];
+      DU limit = rs[-2];
+      index += n;
+      rs[-1] = index;
+      if (n >= 0) {
+        if (index >= limit) break;
+      }
+      else {
+        if (index <= limit) break;
+      }
+    } while (true);
+    rs.pop();
+    rs.pop();
+  }
+  catch (int) {
+    rs.pop();
+    rs.pop();
+  }
+}
+
 void _does(Code* c)
 {
   bool hit = false;
@@ -821,9 +857,12 @@ void _see(Code* c)
   }
   if (strcmp(nm, "do") == 0) {
     fout << "do ";
+    return;
+  }
+  if (strcmp(nm, "loop") == 0 || strcmp(nm, "+loop") == 0) {
     for (Code* w : c->pf)
       _see(w);
-    fout << "loop ";
+    fout << nm << " ";
     return;
   }
   if (nm[0] != '\0' && nm[0] != '\t') {

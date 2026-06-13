@@ -18,7 +18,7 @@ extern "C" void app_main()
     if (Serial.available()) {
       tib = Serial.readStringUntil('\n');
       tib.trim();
-      Serial.println(tib);
+      Serial.print(tib + " ");
 
       forth_vm(tib.c_str(), rsp_to_con);
     }

@@ -760,14 +760,10 @@ void ss_dump(DU base)
     return &buf[i];
   };
 
-  if (ss.empty()) {
-    fout << "-> ok" << ENDL;
-    return;
-  }
+  fout << "<" << ss.size() << "> ";
   for (DU v : ss) {
     fout << rdx(v, base) << ' ';
   }
-  fout << "-> ok" << ENDL;
 }
 
 void _see(Code* c)
@@ -952,6 +948,7 @@ void forth_init()
 int forth_vm(const char* cmd, void (*hook)(int, const char*))
 {
   static uint err_cnt = 0;
+  bool error_occured = false;
   auto outer = [&]() {
     string idiom;
     while (fin >> idiom) {
@@ -959,7 +956,8 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
         forth_core(idiom);
       }
       catch (exception& e) {
-        ++err_cnt;
+        err_cnt++;
+        error_occured = true;
         fout << ":" << err_cnt << ": " << e.what() << ENDL;
         fout << ">>>" << idiom << "<<<" << ENDL;
         if (fout_cb && !fout.str().empty()) {
@@ -981,7 +979,7 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
     fin.str(line);
     outer();
   }
-  if (!compile) ss_dump(BASE);
+  if (!error_occured) fout << " ok" << ENDL;
   if (fout_cb && !fout.str().empty()) {
     fout_cb((int)fout.str().length(), fout.str().c_str());
     fout.str("");

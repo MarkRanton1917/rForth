@@ -1,11 +1,14 @@
 #include "mcu.h"
 
+#include <Arduino.h>
+
 extern "C" void app_main()
 {
   Serial.begin(115200);
-  delay(100);
+  vTaskDelay(100);
 
-  mcu_init(); ///> initialize Forth VM
+  forth_init();
+  dict_init();
   mem_stat();
 
   String tib;

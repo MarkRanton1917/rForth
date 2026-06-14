@@ -1,11 +1,8 @@
-///
-/// @file
-/// @brief eForth - C++ vector-based object-threaded implementation (no TOS)
-///
-///====================================================================
+#include "ceforth.h"
+#include "mcu.h"
+
 #include <sstream>
 #include <cstring>
-#include "ceforth.h"
 
 using namespace std;
 
@@ -20,16 +17,6 @@ ostringstream fout;
 char pad[PAD_LENGTH];
 size_t pad_ptr;
 void (*fout_cb)(int, const char*);
-
-#define POP()  (ss.pop())
-#define PUSH(v) (ss.push(v))
-#define BOOL(f) ((f) ? -1 : 0)
-#define VAR(i_w) (*(dict[(int)((UINT(i_w)) & 0xffff)]->pf[0]->q.data() + ((UINT(i_w)) >> 16)))
-#define DICT_PUSH(c) (dict.push(last = (c)))
-#define DICT_POP()   (dict.pop(), last = dict[-1])
-#define BRAN_TGT()   (dict[-2]->pf[-1])
-#define BASE (VAR(0))
-#define UNNEST() throw 0
 
 void _if();
 const Code rom[] = {

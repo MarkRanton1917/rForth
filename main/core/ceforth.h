@@ -1,23 +1,79 @@
-///
-/// @file
-/// @brief eForth header - C++ vector-based, token-threaded
-///
-///====================================================================
 #pragma once
 
 #include <iostream>
 #include <iomanip>
 #include <vector>
 #include <chrono>
-#include "config.h"
+
+#define DU0 0
+#define DU1 1
+#define UINT(v) (static_cast<U32>(v))
+#define MOD(m, n) ((m) % (n))
+#define ABS(v) (abs(v))
+#define ZEQ(v) ((v) == DU0)
+#define EQ(a, b) ((a) == (b))
+#define LT(a, b) ((a) < (b))
+#define GT(a, b) ((a) > (b))
+#define RND() (rand())
+#define ENDL "\r\n"
+
+#if CASE_SENSITIVE
+#define STRCMP(a, b) (strcmp(a, b))
+#else
+#include <strings.h>
+#define STRCMP(a, b) (strcasecmp(a, b))
+#endif
+
+#define DO_WASM __EMSCRIPTEN__
+
+#if (ARDUINO || ESP32)
+#include <Arduino.h>
+#define to_string(i) string(String(i).c_str())
+#if ESP32
+#define analogWrite(c, v, mx) ledcWrite((c), (8191 / mx) * min((int)(v), mx))
+#endif
+
+#elif DO_WASM
+#include <emscripten.h>
+#define millis() EM_ASM_INT({ return Date.now(); })
+#define delay(ms)                                                              \
+    EM_ASM({ let t = setTimeout(() = > clearTimeout(t), $0); }, ms)
+#define yield()
+#else
+#include <chrono>
+#include <thread>
+#define millis()                                                               \
+    chrono::duration_cast<chrono::milliseconds>(                               \
+        chrono::steady_clock::now().time_since_epoch())                        \
+        .count()
+#define delay(ms) this_thread::sleep_for(chrono::milliseconds(ms))
+#define yield() this_thread::yield()
+#define PROGMEM
+#endif
 
 #define CODE(s, g) { s, #g, [](Code *c) { g; }, __COUNTER__ }
 #define IMMD(s, g) { s, #g, [](Code *c) { g; }, __COUNTER__ | Code::IMMD_FLAG }
+#define POP()  (ss.pop())
+#define PUSH(v) (ss.push(v))
+#define BOOL(f) ((f) ? -1 : 0)
+#define VAR(i_w) (*(dict[(int)((UINT(i_w)) & 0xffff)]->pf[0]->q.data() + ((UINT(i_w)) >> 16)))
+#define DICT_PUSH(c) (dict.push(last = (c)))
+#define DICT_POP()   (dict.pop(), last = dict[-1])
+#define BRAN_TGT()   (dict[-2]->pf[-1])
+#define BASE (VAR(0))
+#define UNNEST() throw 0
 
-using namespace std;
+typedef uint32_t U32; ///< unsigned 32-bit integer
+typedef int32_t S32; ///< signed 32-bit integer
+typedef uint16_t U16; ///< unsigned 16-bit integer
+typedef uint8_t U8; ///< byte, unsigned character
+typedef uintptr_t UFP; ///< function pointer as integer
+typedef uint16_t IU; ///< instruction pointer unit
+typedef int64_t DU2;
+typedef int32_t DU;
 
 template<typename T>
-struct FV : public vector<T> {
+struct FV : public std::vector<T> {
   FV* merge(FV<T>& v)
   {
     this->insert(this->end(), v.begin(), v.end());
@@ -42,7 +98,7 @@ struct FV : public vector<T> {
 #if CC_DEBUG
     return this->at(i < 0 ? (this->size() + i) : i);
 #else
-    return vector<T>::operator[](i < 0 ? (this->size() + i) : i);
+    return std::vector<T>::operator[](i < 0 ? (this->size() + i) : i);
 #endif
   }
 };
@@ -62,12 +118,18 @@ void _loop(Code* c);
 void _plus_loop(Code* c);
 void _does(Code* c);
 
-string word(char delim = 0);
+std::string word(char delim = 0);
 void ss_dump(DU base);
 void see(Code* c);
 void words();
 void load(const char* fn);
-Code* find(string s);
+Code* find(std::string s);
+
+void forth_init();
+int forth_vm(const char* cmd, void (*hook)(int, const char*));
+
+extern FV<Code*> dict;
+extern FV<DU> ss;
 
 struct Code {
   const static U32 IMMD_FLAG = 0x80000000;
@@ -88,7 +150,7 @@ struct Code {
     };
   };
   Code(const char* s, const char* d, XT fp, U32 a);
-  Code(const string s, bool n = true);
+  Code(const std::string s, bool n = true);
   Code(XT fp)
     : name(""),
       xt(fp),
@@ -140,10 +202,10 @@ struct Var : Code {
 };
 
 struct Str : Code {
-  Str(string s, int tok = 0, int len = 0)
+  Str(std::string s, int tok = 0, int len = 0)
     : Code(_str)
   {
-    name = (new string(s))->c_str();
+    name = (new std::string(s))->c_str();
     token = (len << 16) | tok;
     is_str = 1;
   }
@@ -174,6 +236,3 @@ struct Bran : Code {
     is_str = 0;
   }
 };
-
-extern void mem_stat();
-extern void forth_include(const char* fn);

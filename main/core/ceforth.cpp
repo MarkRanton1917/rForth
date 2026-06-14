@@ -17,7 +17,8 @@ Code* last;
 
 istringstream fin;
 ostringstream fout;
-string pad;
+char pad[PAD_LENGTH];
+size_t pad_ptr;
 void (*fout_cb)(int, const char*);
 
 #define POP()  (ss.pop())
@@ -28,7 +29,6 @@ void (*fout_cb)(int, const char*);
 #define DICT_POP()   (dict.pop(), last = dict[-1])
 #define BRAN_TGT()   (dict[-2]->pf[-1])
 #define BASE (VAR(0))
-#define STR(i_w) (EQ(i_w, UINT(-DU1)) ? pad.c_str() : dict[(UINT(i_w)) & 0xffff]->pf[(UINT(i_w)) >> 16]->name)
 #define UNNEST() throw 0
 
 void _if();
@@ -167,14 +167,6 @@ const Code rom[] = {
       DU a = POP();
       PUSH(a - 1);
     }),
-#if USE_FLOAT
-  CODE("int",
-    {
-      DU a = POP();
-      PUSH(a < DU0 ? -DU1 * UINT(-a) : UINT(a));
-    }),
-#endif
-
   CODE("0=",
     {
       DU a = POP();
@@ -375,9 +367,10 @@ const Code rom[] = {
   CODE("type",
     {
       DU len = POP();
-      DU i_w = UINT(POP());
-      string s = STR(i_w);
-      fout << s.substr(0, (size_t)len);
+      const char* addr = reinterpret_cast<const char*>(POP());
+      for (int i = 0; i < len; i++) {
+        fout << addr[i];
+      }
     }),
 
   IMMD("(", word(')')),
@@ -399,12 +392,55 @@ const Code rom[] = {
         last->append(new Str(s, last->token, last->pf.size()));
       }
       else {
-        pad = s;
-        PUSH(-DU1);
-        PUSH(s.length());
+        int len = s.length();
+        size_t copy_len = std::min(PAD_LENGTH - 1, len);
+        pad_ptr = PAD_LENGTH - 1 - len;
+        char* addr = &pad[pad_ptr];
+        memcpy(addr, s.c_str(), copy_len);
+        pad[PAD_LENGTH - 1] = '\0';
+        PUSH((DU)addr);
+        PUSH(len);
       }
     }),
+  CODE("<#", { pad_ptr = PAD_LENGTH - 1; }),
+  CODE("#",
+    {
+      DU n = POP();
+      DU base = BASE;
+      DU digit = n % base;
+      n /= base;
+      if (pad_ptr == 0) throw runtime_error("PAD overflow");
+      char ch = (digit < 10) ? (char)('0' + digit) : (char)('A' + digit - 10);
+      pad[--pad_ptr] = ch;
+      PUSH(n);
+    }),
+  CODE("#s",
+    {
+      DU n = POP();
+      DU base = BASE;
+      while (n != 0) {
+        DU digit = n % base;
+        n /= base;
+        if (pad_ptr == 0) throw runtime_error("PAD overflow");
+        char ch = (digit < 10) ? (char)('0' + digit) : (char)('A' + digit - 10);
+        pad[--pad_ptr] = ch;
+      }
+      PUSH(n);
+    }),
 
+  CODE("#>",
+    {
+      DU n = POP();
+      (void)n;
+      PUSH((DU)(pad + pad_ptr));
+      PUSH(PAD_LENGTH - pad_ptr - 1);
+    }),
+  CODE("hold",
+    {
+      char ch = (char)POP();
+      if (pad_ptr == 0) throw runtime_error("PAD overflow");
+      pad[--pad_ptr] = ch;
+    }),
   IMMD("if", last->append(new Bran(_if)); DICT_PUSH(new Tmp())),
   IMMD("else",
     {
@@ -600,9 +636,10 @@ const Code rom[] = {
   CODE("delay", delay(UINT(POP()))),
   CODE("included",
     {
-      POP();
-      U32 i_w = UINT(POP());
-      load(STR(i_w));
+      size_t len = (size_t)(POP());
+      (void)len;
+      const char* filename = reinterpret_cast<const char*>(static_cast<uintptr_t>(POP()));
+      load(filename);
     }),
   CODE("forget",
     {
@@ -635,7 +672,7 @@ Code::Code(string s, bool n)
   xt = w ? w->xt : nullptr;
   token = n ? dict.size() : 0;
   if (n && w) {
-    fout << "reDef?" << ENDL;
+    fout << "reDef? ";
   }
 }
 
@@ -775,13 +812,6 @@ void ss_dump(DU base)
 {
   char buf[34];
   auto rdx = [&buf](DU v, int b) -> const char* {
-#if USE_FLOAT
-    DU t, f = modf(v, &t);
-    if (ABS(f) > DU_EPS) {
-      sprintf(buf, "%0.6g", v);
-      return buf;
-    }
-#endif
     int i = 33;
     buf[i] = '\0';
     int dec = (b == 10);
@@ -981,6 +1011,8 @@ void forth_init()
     DICT_PUSH((Code*)&rom[i]);
   }
   dict[0]->append(new Var(10));
+  pad_ptr = PAD_LENGTH - 1;
+  pad[PAD_LENGTH - 1] = '\0';
 }
 
 int forth_vm(const char* cmd, void (*hook)(int, const char*))

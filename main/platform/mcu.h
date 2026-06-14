@@ -12,7 +12,6 @@
 ///     940ms orig/40x/ceforth use cached xt offsets in nest()
 ///     665ms src/ceforth vector-based token-threaded
 ///
-const char* APP_VERSION = "eForth v4.2";
 ///
 ///> interface to core module
 ///
@@ -31,7 +30,9 @@ void mem_stat()
   size_t t = heap_caps_get_total_size(MALLOC_CAP_8BIT);
   size_t f = heap_caps_get_free_size(MALLOC_CAP_8BIT);
   int64_t p = 1000L * f / t;
-  LOGS("eForth 4.2 on Core[");
+  LOGS("eForth ");
+  LOGS(GIT_VERSION);
+  LOGS(" on Core[");
   LOG(xPortGetCoreID());
   LOGS("] at ");
   LOG(getCpuFrequencyMhz());

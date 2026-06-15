@@ -9,16 +9,17 @@ using namespace std;
 FV<Code*> dict;
 FV<DU> ss;
 FV<DU> rs;
+vector<uint8_t> heap;
+size_t heap_ptr = 0;
 bool compile = false;
 Code* last;
 
 istringstream fin;
 ostringstream fout;
-char pad[PAD_LENGTH];
+char pad[PAD_SIZE];
 size_t pad_ptr;
 void (*fout_cb)(int, const char*);
 
-void _if();
 const Code rom[] = {
   CODE("bye", exit(0)),
 
@@ -325,7 +326,7 @@ const Code rom[] = {
   CODE("r>", PUSH(rs.pop())),
   CODE("r@", PUSH(rs[-1])),
 
-  CODE("base", PUSH(0)),
+  CODE("base", PUSH(BASE)),
   CODE("decimal", fout << setbase(BASE = 10)),
   CODE("hex", fout << setbase(BASE = 16)),
   CODE("bl", PUSH(0x20)),
@@ -380,16 +381,16 @@ const Code rom[] = {
       }
       else {
         int len = s.length();
-        size_t copy_len = std::min(PAD_LENGTH - 1, len);
-        pad_ptr = PAD_LENGTH - 1 - len;
+        size_t copy_len = std::min(PAD_SIZE - 1, len);
+        pad_ptr = PAD_SIZE - 1 - len;
         char* addr = &pad[pad_ptr];
         memcpy(addr, s.c_str(), copy_len);
-        pad[PAD_LENGTH - 1] = '\0';
+        pad[PAD_SIZE - 1] = '\0';
         PUSH((DU)addr);
         PUSH(len);
       }
     }),
-  CODE("<#", { pad_ptr = PAD_LENGTH - 1; }),
+  CODE("<#", { pad_ptr = PAD_SIZE - 1; }),
   CODE("#",
     {
       DU n = POP();
@@ -420,7 +421,7 @@ const Code rom[] = {
       DU n = POP();
       (void)n;
       PUSH((DU)(pad + pad_ptr));
-      PUSH(PAD_LENGTH - pad_ptr - 1);
+      PUSH(PAD_SIZE - pad_ptr - 1);
     }),
   CODE("hold",
     {
@@ -529,24 +530,26 @@ const Code rom[] = {
     {
       DICT_PUSH(new Code(word()));
       DU v = POP();
-      Code* w = last->append(new Lit(v));
-      w->pf[0]->token = w->token;
+      last->append(new Lit(v));
     }),
   CODE("variable",
     {
       DICT_PUSH(new Code(word()));
-      Code* w = last->append(new Var(DU0));
-      w->pf[0]->token = w->token;
+      DU addr = (DU)&heap[heap_ptr];
+      ALLOT(sizeof(DU));
+      *(DU*)addr = 0;
+      last->append(new Var(addr));
     }),
   CODE("immediate", last->immd = 1),
-
-  CODE("exec", dict[UINT(POP())]->exec()),
+  CODE("execute",
+    {
+      Code* w = reinterpret_cast<Code*>(POP());
+      w->exec();
+    }),
   CODE("create",
     {
       DICT_PUSH(new Code(word()));
-      Code* w = last->append(new Var(DU0));
-      w->pf[0]->token = w->token;
-      w->pf[0]->q.pop();
+      last->append(new Var((DU)&heap[heap_ptr]));
     }),
   IMMD("does>", last->append(new Bran(_does)); last->pf[-1]->token = last->token),
   CODE("to",
@@ -565,31 +568,52 @@ const Code rom[] = {
 
   CODE("@",
     {
-      U32 i_w = UINT(POP());
-      PUSH(VAR(i_w));
+      DU addr = POP();
+      PUSH(*(DU*)addr);
     }),
   CODE("!",
     {
-      U32 i_w = UINT(POP());
-      VAR(i_w) = POP();
+      DU val = POP();
+      DU addr = POP();
+      *(DU*)addr = val;
+    }),
+  CODE("c@",
+    {
+      DU addr = POP();
+      PUSH(*(char*)addr);
+    }),
+  CODE("c!",
+    {
+      DU val = POP();
+      DU addr = POP();
+      *(char*)addr = (char)(val & 0xFF);
     }),
   CODE("+!",
     {
-      U32 i_w = UINT(POP());
-      VAR(i_w) += POP();
+      DU val = POP();
+      DU addr = POP();
+      *(DU*)addr += val;
     }),
   CODE("?",
     {
-      U32 i_w = UINT(POP());
-      fout << VAR(i_w) << " ";
+      DU addr = POP();
+      fout << *(DU*)addr << " ";
     }),
-  CODE(",", last->pf[0]->q.push(POP())),
-  CODE("cells", { /* backward compatible */ }),
+  CODE(",",
+    {
+      DU val = POP();
+      *(DU*)&heap[heap_ptr] = val;
+      ALLOT(sizeof(DU));
+    }),
+  CODE("cells",
+    {
+      DU val = POP();
+      PUSH(val * sizeof(DU));
+    }),
   CODE("allot",
     {
-      U32 n = UINT(POP());
-      for (U32 i = 0; i < n; i++)
-        last->pf[0]->q.push(DU0);
+      DU n = POP();
+      ALLOT(n);
     }),
   CODE("th",
     {
@@ -597,12 +621,11 @@ const Code rom[] = {
       DU w = POP();
       PUSH(UINT(w) | i);
     }),
-
-  CODE("here", PUSH(last->token)),
+  CODE("here", PUSH((DU)&heap[heap_ptr])),
   CODE("'",
     {
       Code* w = find(word());
-      if (w) PUSH(w->token);
+      if (w) PUSH(reinterpret_cast<DU>(w));
     }),
   CODE(".s", ss_dump(BASE)),
   CODE("words", words()),
@@ -651,6 +674,7 @@ Code::Code(const char* s, const char* d, XT fp, U32 a)
     attr(a)
 {
 }
+
 Code::Code(string s, bool n)
 {
   Code* w = find(s);
@@ -663,6 +687,16 @@ Code::Code(string s, bool n)
   }
 }
 
+void _does(Code* c)
+{
+  bool hit = false;
+  for (Code* w : dict[c->token]->pf) {
+    if (hit) last->append(w);
+    if (STRCMP(w->name, "does>") == 0) hit = true;
+  }
+  throw 0;
+}
+
 void _str(Code* c)
 {
   if (!c->token)
@@ -672,18 +706,22 @@ void _str(Code* c)
     PUSH(strlen(c->name));
   }
 }
+
 void _lit(Code* c)
 {
   PUSH(c->q[0]);
 }
+
 void _var(Code* c)
 {
-  PUSH(c->token);
+  PUSH(c->q[0]);
 }
+
 void _tor(Code* c)
 {
   rs.push(POP());
 }
+
 void _tor2(Code* c)
 {
   DU first = POP();
@@ -691,6 +729,7 @@ void _tor2(Code* c)
   rs.push(limit);
   rs.push(first);
 }
+
 void _if(Code* c)
 {
   if (POP()) {
@@ -702,6 +741,7 @@ void _if(Code* c)
       w->exec();
   }
 }
+
 void _begin(Code* c)
 {
   int b = c->stage;
@@ -715,6 +755,7 @@ void _begin(Code* c)
       w->exec();
   }
 }
+
 void _for(Code* c)
 {
   int b = c->stage;
@@ -776,16 +817,6 @@ void _plus_loop(Code* c)
     rs.pop();
     rs.pop();
   }
-}
-
-void _does(Code* c)
-{
-  bool hit = false;
-  for (Code* w : dict[c->token]->pf) {
-    if (hit) last->append(w);
-    if (STRCMP(w->name, "does>") == 0) hit = true;
-  }
-  throw 0;
 }
 
 string word(char delim)
@@ -997,9 +1028,11 @@ void forth_init()
   for (int i = 0; i < sz; ++i) {
     DICT_PUSH((Code*)&rom[i]);
   }
-  dict[0]->append(new Var(10));
-  pad_ptr = PAD_LENGTH - 1;
-  pad[PAD_LENGTH - 1] = '\0';
+  heap.resize(HEAP_SIZE);
+  heap_ptr = sizeof(DU);
+  BASE = 10;
+  pad_ptr = PAD_SIZE - 1;
+  pad[PAD_SIZE - 1] = '\0';
 }
 
 int forth_vm(const char* cmd, void (*hook)(int, const char*))
@@ -1056,6 +1089,13 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
     return ret;
   };
 
+  auto output = [&]() {
+    if (fout_cb && !fout.str().empty()) {
+      fout_cb((int)fout.str().length(), fout.str().c_str());
+      fout.str("");
+    }
+  };
+
   auto outer = [&](const string& current_line) {
     string idiom;
     while (fin >> idiom) {
@@ -1069,12 +1109,12 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
         fout << ":" << err_cnt << ": " << e.what() << ENDL;
         string marked_line = replace(current_line, idiom, e.what());
         fout << marked_line << ENDL;
-        if (fout_cb && !fout.str().empty()) {
-          fout_cb((int)fout.str().length(), fout.str().c_str());
-          fout.str("");
-        }
+        output();
         compile = false;
         getline(fin, idiom, '\n');
+      }
+      catch (int) {
+        output();
       }
     }
   };
@@ -1092,9 +1132,6 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
   }
 
   if (!error_occured) fout << " ok" << ENDL;
-  if (fout_cb && !fout.str().empty()) {
-    fout_cb((int)fout.str().length(), fout.str().c_str());
-    fout.str("");
-  }
+  output();
   return 0;
 }

@@ -60,7 +60,8 @@
 #define DICT_PUSH(c) (dict.push(last = (c)))
 #define DICT_POP()   (dict.pop(), last = dict[-1])
 #define BRAN_TGT()   (dict[-2]->pf[-1])
-#define BASE (VAR(0))
+#define BASE (*(DU*)(&(heap[0])))
+#define ALLOT(n) do { heap_ptr += (n); if (heap_ptr > heap.size()) heap.resize(heap_ptr + 1024); } while(0)
 #define UNNEST() throw 0
 
 typedef uint32_t U32; ///< unsigned 32-bit integer
@@ -130,6 +131,8 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*));
 
 extern FV<Code*> dict;
 extern FV<DU> ss;
+extern std::vector<uint8_t> heap;
+extern size_t heap_ptr;
 
 struct Code {
   const static U32 IMMD_FLAG = 0x80000000;

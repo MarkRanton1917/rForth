@@ -20,7 +20,8 @@ endif()
 add_definitions(
   -DCC_DEBUG=1 
   -DCASE_SENSITIVE=1 
-  -DPAD_LENGTH=64
+  -DPAD_SIZE=64
+  -DHEAP_SIZE=65536
 )
 add_definitions(
   -DGIT_VERSION="${GIT_VERSION}" 

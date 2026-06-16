@@ -376,6 +376,26 @@ const Code rom[] = {
         PUSH(len);
       }
     }),
+  IMMD("abort\"",
+    {
+      string s = word('"').substr(1);
+      if (compile) {
+        Code* c = new Code((new string(s))->c_str(), "", _abort, 0);
+        c->is_str = true;
+        last->append(c);
+      }
+      else {
+        ss.clear();
+        rs.clear();
+        throw runtime_error(s);
+      }
+    }),
+  CODE("abort",
+    {
+      ss.clear();
+      rs.clear();
+      throw runtime_error("Aborted");
+    }),
   CODE("<#", { pad_ptr = PAD_SIZE - 1; }),
   CODE("#",
     {
@@ -743,6 +763,13 @@ void _plus_loop(Code* c)
     rs.pop();
     rs.pop();
   }
+}
+
+void _abort(Code* c)
+{
+  ss.clear();
+  rs.clear();
+  throw runtime_error(c->name ? c->name : "Aborted");
 }
 
 string word(char delim)

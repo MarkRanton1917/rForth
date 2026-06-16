@@ -115,6 +115,7 @@ void _if(Code* c);
 void _begin(Code* c);
 void _loop(Code* c);
 void _plus_loop(Code* c);
+void _abort(Code* c);
 void _does(Code* c);
 
 std::string word(char delim = 0);

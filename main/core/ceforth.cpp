@@ -633,7 +633,7 @@ Code::Code(string s, bool n)
   xt = w ? w->xt : nullptr;
   token = n ? dict.size() : 0;
   if (n && w) {
-    fout << "reDef? ";
+    fout << "redefined " << s << " ";
   }
 }
 

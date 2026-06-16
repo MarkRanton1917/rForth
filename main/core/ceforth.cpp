@@ -22,7 +22,6 @@ void (*fout_cb)(int, const char*);
 
 const Code rom[] = {
   CODE("bye", exit(0)),
-
   CODE("+",
     {
       DU b = POP();
@@ -218,7 +217,6 @@ const Code rom[] = {
       DU a = POP();
       PUSH(BOOL(UINT(a) > UINT(b)));
     }),
-
   CODE("dup",
     {
       DU a = POP();
@@ -249,15 +247,6 @@ const Code rom[] = {
       PUSH(b);
       PUSH(a);
       PUSH(c);
-    }),
-  CODE("-rot",
-    {
-      DU a = POP();
-      DU b = POP();
-      DU c = POP();
-      PUSH(a);
-      PUSH(c);
-      PUSH(b);
     }),
   CODE("pick",
     {
@@ -415,7 +404,6 @@ const Code rom[] = {
       }
       PUSH(n);
     }),
-
   CODE("#>",
     {
       DU n = POP();
@@ -449,7 +437,6 @@ const Code rom[] = {
         if (s == 1) DICT_POP();
       }
     }),
-
   IMMD("begin", last->append(new Bran(_begin)); DICT_PUSH(new Tmp())),
   IMMD("while",
     {
@@ -474,23 +461,6 @@ const Code rom[] = {
     {
       Code* b = BRAN_TGT();
       b->pf.merge(last->pf);
-      DICT_POP();
-    }),
-
-  IMMD("for", last->append(new Bran(_tor)); last->append(new Bran(_for)); DICT_PUSH(new Tmp())),
-  IMMD("aft",
-    {
-      Code* b = BRAN_TGT();
-      b->pf.merge(last->pf);
-      b->stage = 3;
-    }),
-  IMMD("next",
-    {
-      Code* b = BRAN_TGT();
-      if (b->stage == 0)
-        b->pf.merge(last->pf);
-      else
-        b->p2.merge(last->pf);
       DICT_POP();
     }),
   IMMD("do", last->append(new Bran(_tor2)); last->append(new Bran(nullptr)); DICT_PUSH(new Tmp())),
@@ -552,20 +522,6 @@ const Code rom[] = {
       last->append(new Var((DU)&heap[heap_ptr]));
     }),
   IMMD("does>", last->append(new Bran(_does)); last->pf[-1]->token = last->token),
-  CODE("to",
-    {
-      Code* w = find(word());
-      if (!w) return;
-      VAR(w->token) = POP();
-    }),
-  CODE("is",
-    {
-      DICT_PUSH(new Code(word(), false));
-      int w = UINT(POP());
-      last->xt = dict[w]->xt;
-      last->pf = dict[w]->pf;
-    }),
-
   CODE("@",
     {
       DU addr = POP();
@@ -614,12 +570,6 @@ const Code rom[] = {
     {
       DU n = POP();
       ALLOT(n);
-    }),
-  CODE("th",
-    {
-      U32 i = UINT(POP()) << 16;
-      DU w = POP();
-      PUSH(UINT(w) | i);
     }),
   CODE("here", PUSH((DU)&heap[heap_ptr])),
   CODE("'",
@@ -756,28 +706,6 @@ void _begin(Code* c)
   }
 }
 
-void _for(Code* c)
-{
-  int b = c->stage;
-  try {
-    do {
-      for (Code* w : c->pf)
-        w->exec();
-    } while (b == 0 && (rs[-1] -= 1) >= 0);
-    while (b) {
-      for (Code* w : c->p2)
-        w->exec();
-      if ((rs[-1] -= 1) < 0) break;
-      for (Code* w : c->p1)
-        w->exec();
-    }
-    rs.pop();
-  }
-  catch (int) {
-    rs.pop();
-  }
-}
-
 void _loop(Code* c)
 {
   try {
@@ -885,21 +813,6 @@ void _see(Code* c)
     else if (c->stage == 1) {
       fout << "again ";
     }
-    return;
-  }
-  if (strcmp(nm, "for") == 0) {
-    fout << "for ";
-    for (Code* w : c->pf)
-      _see(w);
-    if (c->stage == 3) {
-      fout << "aft ";
-      for (Code* w : c->p1)
-        _see(w);
-      fout << "then ";
-      for (Code* w : c->p2)
-        _see(w);
-    }
-    fout << "next ";
     return;
   }
   if (strcmp(nm, "do") == 0) {

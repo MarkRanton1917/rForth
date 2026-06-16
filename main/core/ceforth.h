@@ -56,7 +56,6 @@
 #define POP()  (ss.pop())
 #define PUSH(v) (ss.push(v))
 #define BOOL(f) ((f) ? -1 : 0)
-#define VAR(i_w) (*(dict[(int)((UINT(i_w)) & 0xffff)]->pf[0]->q.data() + ((UINT(i_w)) >> 16)))
 #define DICT_PUSH(c) (dict.push(last = (c)))
 #define DICT_POP()   (dict.pop(), last = dict[-1])
 #define BRAN_TGT()   (dict[-2]->pf[-1])
@@ -114,7 +113,6 @@ void _tor(Code* c);
 void _tor2(Code* c);
 void _if(Code* c);
 void _begin(Code* c);
-void _for(Code* c);
 void _loop(Code* c);
 void _plus_loop(Code* c);
 void _does(Code* c);
@@ -226,8 +224,6 @@ struct Bran : Code {
       name = "+loop";
     else if (fp == _tor)
       name = ">r";
-    else if (fp == _for)
-      name = "for";
     else if (fp == _if)
       name = "if";
     else if (fp == _begin)

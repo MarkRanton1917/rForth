@@ -261,6 +261,23 @@ const Code rom[] = {
       POP();
       PUSH(a);
     }),
+  CODE("-rot",
+    {
+      DU a = POP();
+      DU b = POP();
+      DU c = POP();
+      PUSH(a);
+      PUSH(c);
+      PUSH(b);
+    }),
+  CODE("tuck",
+    {
+      DU a = POP();
+      DU b = POP();
+      PUSH(a);
+      PUSH(b);
+      PUSH(a);
+    }),
   CODE("?dup",
     {
       DU a = POP();

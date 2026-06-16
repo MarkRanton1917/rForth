@@ -526,8 +526,8 @@ const Code rom[] = {
     }),
   CODE("!",
     {
-      DU val = POP();
       DU addr = POP();
+      DU val = POP();
       *(DU*)addr = val;
     }),
   CODE("c@",
@@ -537,14 +537,14 @@ const Code rom[] = {
     }),
   CODE("c!",
     {
-      DU val = POP();
       DU addr = POP();
+      DU val = POP();
       *(char*)addr = (char)(val & 0xFF);
     }),
   CODE("+!",
     {
-      DU val = POP();
       DU addr = POP();
+      DU val = POP();
       *(DU*)addr += val;
     }),
   CODE("?",

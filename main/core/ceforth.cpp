@@ -1070,7 +1070,14 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
     outer(line);
   }
 
-  if (!error_occured) fout << " ok" << ENDL;
+  if (!error_occured) {
+    if (compile) {
+      fout << " compiled" << ENDL;
+    }
+    else {
+      fout << " ok" << ENDL;
+    }
+  }
   output();
   return 0;
 }

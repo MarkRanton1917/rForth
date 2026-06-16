@@ -310,11 +310,9 @@ const Code rom[] = {
       PUSH(c);
       PUSH(d);
     }),
-
   CODE(">r", rs.push(POP())),
   CODE("r>", PUSH(rs.pop())),
   CODE("r@", PUSH(rs[-1])),
-
   CODE("base", PUSH(BASE)),
   CODE("decimal", fout << setbase(BASE = 10)),
   CODE("hex", fout << setbase(BASE = 16)),
@@ -349,7 +347,6 @@ const Code rom[] = {
         fout << addr[i];
       }
     }),
-
   IMMD("(", word(')')),
   IMMD(".(", fout << word(')')),
   IMMD("\\",
@@ -649,11 +646,12 @@ void _does(Code* c)
 
 void _str(Code* c)
 {
-  if (!c->token)
-    fout << c->name;
-  else {
-    PUSH(c->token);
+  if (c->is_str) {
+    PUSH((DU)c->name);
     PUSH(strlen(c->name));
+  }
+  else {
+    fout << c->name;
   }
 }
 

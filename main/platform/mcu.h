@@ -5,7 +5,7 @@
 extern FV<Code*> ops;
 
 void mem_stat();
-void forth_include(const char* fn);
+bool forth_include(const char* fn);
 
 inline void dict_init()
 {

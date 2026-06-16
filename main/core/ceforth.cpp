@@ -870,8 +870,9 @@ void load(const char* fn)
   void (*cb)(int, const char*) = fout_cb;
   string in;
   getline(fin, in);
-  fout << ENDL;
-  forth_include(fn);
+  if (!forth_include(fn)) {
+    throw runtime_error("Can't open file");
+  }
   fout_cb = cb;
   fin.clear();
   fin.str(in);

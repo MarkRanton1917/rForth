@@ -15,24 +15,19 @@ void mem_stat()
     getCpuFrequencyMhz(), static_cast<float>(p) * 0.1, f >> 10, t >> 10);
 }
 
-void forth_include(const char* fname)
+bool forth_include(const char* fname)
 {
   auto dumb = [](int, const char*) {};
 
   if (!LittleFS.begin()) {
-    Serial.println("Error mounting LittleFS");
-    return;
+    return false;
   }
 
   File file = LittleFS.open(fname, "r");
   if (!file) {
-    Serial.printf("Error opening file: %s\n", fname);
     LittleFS.end();
-    return;
+    return false;
   }
-
-  Serial.printf("Loading file: %s...\n", fname);
-
   while (file.available()) {
     char cmd[256], *p = cmd, c;
     while ((c = file.read()) != '\n' && p - cmd < 255) {
@@ -41,8 +36,7 @@ void forth_include(const char* fname)
     *p = '\0';
     forth_vm(cmd, dumb);
   }
-
-  Serial.println("Done loading");
   file.close();
   LittleFS.end();
+  return true;
 }

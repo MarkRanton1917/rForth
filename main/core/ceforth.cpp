@@ -3,19 +3,81 @@
 
 #include <sstream>
 #include <cstring>
+#include <iomanip>
+#include <vector>
+#include <chrono>
+#include <string>
+#include <cstdlib>
+#include <algorithm>
+#include <iostream>
 
-using namespace std;
+#define DU0 0
+#define DU1 1
+#define UINT(v) (static_cast<U32>(v))
+#define MOD(m, n) ((m) % (n))
+#define ABS(v) (abs(v))
+#define ZEQ(v) ((v) == DU0)
+#define EQ(a, b) ((a) == (b))
+#define LT(a, b) ((a) < (b))
+#define GT(a, b) ((a) > (b))
+#define RND() (rand())
+#define ENDL "\r\n"
+#define MARKER_FRAME ((DU)0xDEADBEEF)
+
+#if CASE_SENSITIVE
+#define STRCMP(a, b) (strcmp(a, b))
+#else
+#include <strings.h>
+#define STRCMP(a, b) (strcasecmp(a, b))
+#endif
+
+#define DO_WASM __EMSCRIPTEN__
+
+#if (ARDUINO || ESP32)
+#include <Arduino.h>
+#define to_string(i) std::string(String(i).c_str())
+#if ESP32
+#define analogWrite(c, v, mx) ledcWrite((c), (8191 / mx) * min((int)(v), mx))
+#endif
+#elif DO_WASM
+#include <emscripten.h>
+#define millis() EM_ASM_INT({ return Date.now(); })
+#define delay(ms) EM_ASM({ let t = setTimeout(() => clearTimeout(t), $0); }, ms)
+#define yield()
+#else
+#include <chrono>
+#include <thread>
+#define millis() std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()
+#define delay(ms) std::this_thread::sleep_for(std::chrono::milliseconds(ms))
+#define yield() std::this_thread::yield()
+#define PROGMEM
+#endif
+
+#define CODE(s, g) { s, #g, [](Code *c) { g; }, __COUNTER__ }
+#define IMMD(s, g) { s, #g, [](Code *c) { g; }, __COUNTER__ | Code::IMMD_FLAG }
+#define POP()  (ss.pop())
+#define PUSH(v) (ss.push(v))
+#define BOOL(f) ((f) ? -1 : 0)
+#define DICT_PUSH(c) (dict.push(last = (c)))
+#define DICT_POP()   (dict.pop(), last = dict[-1])
+#define BRAN_TGT()   (dict[-2]->pf[-1])
+#define BASE (*(DU*)(&(heap[0])))
+#define ALLOT(n) do { heap_ptr += (n); if (heap_ptr > heap.size()) heap.resize(heap_ptr + 1024); } while(0)
+
+std::vector<const Code*> call_stack;
+const std::vector<Code*>* current_pf = nullptr;
+size_t current_ip = 0;
 
 FV<Code*> dict;
 FV<DU> ss;
 FV<DU> rs;
-vector<uint8_t> heap;
+std::vector<uint8_t> heap;
 size_t heap_ptr = 0;
 bool compile = false;
 Code* last;
 
-istringstream fin;
-ostringstream fout;
+std::istringstream fin;
+std::ostringstream fout;
 char pad[PAD_SIZE];
 size_t pad_ptr;
 void (*fout_cb)(int, const char*);
@@ -251,7 +313,7 @@ const Code rom[] = {
   CODE("pick",
     {
       DU n = POP();
-      if (n < 0 || n >= (DU)ss.size()) throw runtime_error("pick out of range");
+      if (n < 0 || n >= (DU)ss.size()) throw std::runtime_error("pick out of range");
       DU v = ss[ss.size() - 1 - n];
       PUSH(v);
     }),
@@ -288,7 +350,6 @@ const Code rom[] = {
       else
         PUSH(a);
     }),
-
   CODE("2dup",
     {
       DU a = POP();
@@ -331,30 +392,30 @@ const Code rom[] = {
   CODE("r>", PUSH(rs.pop())),
   CODE("r@", PUSH(rs[-1])),
   CODE("base", PUSH(BASE)),
-  CODE("decimal", fout << setbase(BASE = 10)),
-  CODE("hex", fout << setbase(BASE = 16)),
+  CODE("decimal", fout << std::setbase(BASE = 10)),
+  CODE("hex", fout << std::setbase(BASE = 16)),
   CODE("bl", PUSH(0x20)),
   CODE("cr", fout << ENDL),
-  CODE(".", fout << setbase(BASE) << POP() << " "),
+  CODE(".", fout << std::setbase(BASE) << POP() << " "),
   CODE(".r",
     {
       DU w = POP();
       DU v = POP();
-      fout << setbase(BASE) << setw(w) << v;
+      fout << std::setbase(BASE) << std::setw(w) << v;
     }),
   CODE("u.r",
     {
       DU w = POP();
       DU v = POP();
-      fout << setbase(BASE) << setw(w) << ABS(v);
+      fout << std::setbase(BASE) << std::setw(w) << ABS(v);
     }),
-  CODE("key", PUSH(word()[0])),
+  CODE("key", PUSH(read_word()[0])),
   CODE("emit", fout << (char)POP()),
   CODE("space", fout << " "),
   CODE("spaces",
     {
       DU n = POP();
-      fout << setw(n) << "";
+      fout << std::setw(n) << "";
     }),
   CODE("type",
     {
@@ -364,21 +425,21 @@ const Code rom[] = {
         fout << addr[i];
       }
     }),
-  IMMD("(", word(')')),
-  IMMD(".(", fout << word(')')),
+  IMMD("(", read_word(')')),
+  IMMD(".(", fout << read_word(')')),
   IMMD("\\",
     {
-      string s;
+      std::string s;
       getline(fin, s, '\n');
     }),
   IMMD(".\"",
     {
-      string s = word('"').substr(1);
+      std::string s = read_word('"').substr(1);
       last->append(new Str(s));
     }),
   IMMD("s\"",
     {
-      string s = word('"').substr(1);
+      std::string s = read_word('"').substr(1);
       if (compile) {
         last->append(new Str(s, last->token, last->pf.size()));
       }
@@ -395,23 +456,23 @@ const Code rom[] = {
     }),
   IMMD("abort\"",
     {
-      string s = word('"').substr(1);
+      std::string s = read_word('"').substr(1);
       if (compile) {
-        Code* c = new Code((new string(s))->c_str(), "", _abort, 0);
+        Code* c = new Code((new std::string(s))->c_str(), "", _abort, 0);
         c->is_str = true;
         last->append(c);
       }
       else {
         ss.clear();
         rs.clear();
-        throw runtime_error(s);
+        throw std::runtime_error(s);
       }
     }),
   CODE("abort",
     {
       ss.clear();
       rs.clear();
-      throw runtime_error("Aborted");
+      throw std::runtime_error("Aborted");
     }),
   CODE("<#", { pad_ptr = PAD_SIZE - 1; }),
   CODE("#",
@@ -420,7 +481,7 @@ const Code rom[] = {
       DU base = BASE;
       DU digit = n % base;
       n /= base;
-      if (pad_ptr == 0) throw runtime_error("PAD overflow");
+      if (pad_ptr == 0) throw std::runtime_error("PAD overflow");
       char ch = (digit < 10) ? (char)('0' + digit) : (char)('A' + digit - 10);
       pad[--pad_ptr] = ch;
       PUSH(n);
@@ -432,7 +493,7 @@ const Code rom[] = {
       while (n != 0) {
         DU digit = n % base;
         n /= base;
-        if (pad_ptr == 0) throw runtime_error("PAD overflow");
+        if (pad_ptr == 0) throw std::runtime_error("PAD overflow");
         char ch = (digit < 10) ? (char)('0' + digit) : (char)('A' + digit - 10);
         pad[--pad_ptr] = ch;
       }
@@ -448,7 +509,7 @@ const Code rom[] = {
   CODE("hold",
     {
       char ch = (char)POP();
-      if (pad_ptr == 0) throw runtime_error("PAD overflow");
+      if (pad_ptr == 0) throw std::runtime_error("PAD overflow");
       pad[--pad_ptr] = ch;
     }),
   IMMD("if", last->append(new Bran(_if)); DICT_PUSH(new Tmp())),
@@ -503,7 +564,7 @@ const Code rom[] = {
     {
       rs.pop();
       rs.pop();
-      UNNEST();
+      unnest();
     }),
   IMMD("loop",
     {
@@ -521,24 +582,24 @@ const Code rom[] = {
       b->pf.merge(last->pf);
       DICT_POP();
     }),
-  CODE("exit", UNNEST()),
+  CODE("exit", unnest()),
   CODE("[", compile = false),
   CODE("]", compile = true),
   CODE(":",
     {
-      DICT_PUSH(new Code(word()));
+      DICT_PUSH(new Code(read_word()));
       compile = true;
     }),
   IMMD(";", compile = false),
   CODE("constant",
     {
-      DICT_PUSH(new Code(word()));
+      DICT_PUSH(new Code(read_word()));
       DU v = POP();
       last->append(new Lit(v));
     }),
   CODE("variable",
     {
-      DICT_PUSH(new Code(word()));
+      DICT_PUSH(new Code(read_word()));
       DU addr = (DU)&heap[heap_ptr];
       ALLOT(sizeof(DU));
       *(DU*)addr = 0;
@@ -552,7 +613,7 @@ const Code rom[] = {
     }),
   CODE("create",
     {
-      DICT_PUSH(new Code(word()));
+      DICT_PUSH(new Code(read_word()));
       last->append(new Var((DU)&heap[heap_ptr]));
     }),
   IMMD("does>", last->append(new Bran(_does)); last->pf[-1]->token = last->token),
@@ -608,14 +669,14 @@ const Code rom[] = {
   CODE("here", PUSH((DU)&heap[heap_ptr])),
   CODE("'",
     {
-      Code* w = find(word());
+      Code* w = find(read_word());
       if (w) PUSH(reinterpret_cast<DU>(w));
     }),
   CODE(".s", ss_dump(BASE)),
   CODE("words", words()),
   CODE("see",
     {
-      Code* w = find(word());
+      Code* w = find(read_word());
       if (w) {
         see(w);
       }
@@ -623,7 +684,6 @@ const Code rom[] = {
         throw std::runtime_error("Undefined word");
     }),
   CODE("depth", PUSH(ss.size())),
-
   CODE("mstat", mem_stat()),
   CODE("ms", PUSH(millis())),
   CODE("rnd", PUSH(RND())),
@@ -637,9 +697,9 @@ const Code rom[] = {
     }),
   CODE("forget",
     {
-      Code* w = find(word());
+      Code* w = find(read_word());
       if (!w) return;
-      int t = max((int)w->token, find("boot")->token + 1);
+      int t = std::max((int)w->token, find("boot")->token + 1);
       for (int i = dict.size(); i > t; i--)
         DICT_POP();
     }),
@@ -651,6 +711,39 @@ const Code rom[] = {
     }),
 };
 
+template<typename T>
+FV<T>* FV<T>::merge(FV<T>& v)
+{
+  this->insert(this->end(), v.begin(), v.end());
+  v.clear();
+  return this;
+}
+
+template<typename T>
+void FV<T>::push(T n)
+{
+  this->push_back(n);
+}
+
+template<typename T>
+T FV<T>::pop()
+{
+  if (this->empty()) throw std::runtime_error("Stack underflow");
+  T n = this->back();
+  this->pop_back();
+  return n;
+}
+
+template<typename T>
+T& FV<T>::operator[](int i)
+{
+#if CC_DEBUG
+  return this->at(i < 0 ? (this->size() + i) : i);
+#else
+  return std::vector<T>::operator[](i < 0 ? (this->size() + i) : i);
+#endif
+}
+
 Code::Code(const char* s, const char* d, XT fp, U32 a)
   : name(s),
     desc(d),
@@ -659,16 +752,109 @@ Code::Code(const char* s, const char* d, XT fp, U32 a)
 {
 }
 
-Code::Code(string s, bool n)
+Code::Code(std::string s, bool n)
 {
   Code* w = find(s);
-  name = (new string(s))->c_str();
+  name = (new std::string(s))->c_str();
   desc = "";
   xt = w ? w->xt : nullptr;
   token = n ? dict.size() : 0;
-  if (n && w) {
-    fout << "redefined " << s << " ";
+  if (n && w) fout << "redefined " << s << " ";
+}
+
+Code::Code(XT fp)
+  : name(""),
+    xt(fp),
+    attr(0)
+{
+}
+
+Code::~Code()
+{
+}
+
+Code* Code::append(Code* w)
+{
+  pf.push(w);
+  return this;
+}
+
+void Code::exec()
+{
+  if (xt != nullptr) {
+    call_stack.push_back(this);
+    xt(this);
+    call_stack.pop_back();
   }
+  else {
+    call_stack.push_back(this);
+    rs.push_back(MARKER_FRAME);
+    rs.push_back((DU)current_pf);
+    rs.push_back((DU)current_ip);
+    current_pf = &pf;
+    current_ip = 0;
+
+    while (true) {
+      if (!current_pf || current_ip >= current_pf->size()) {
+        unnest();
+        if (!current_pf) break;
+        continue;
+      }
+      Code* w = (*current_pf)[current_ip++];
+      w->exec();
+      if (!current_pf) break;
+    }
+    if (!call_stack.empty() && call_stack.back() == this) {
+      call_stack.pop_back();
+    }
+  }
+}
+
+Tmp::Tmp()
+  : Code(NULL)
+{
+}
+
+Lit::Lit(DU d)
+  : Code(_lit)
+{
+  q.push(d);
+}
+
+Var::Var(DU d)
+  : Code(_var)
+{
+  q.push(d);
+}
+
+Str::Str(std::string s, int tok, int len)
+  : Code(_str)
+{
+  name = (new std::string(s))->c_str();
+  token = (len << 16) | tok;
+  is_str = 1;
+}
+
+Bran::Bran(XT fp)
+  : Code(fp)
+{
+  if (fp == _tor2)
+    name = "do";
+  else if (fp == _loop)
+    name = "loop";
+  else if (fp == _plus_loop)
+    name = "+loop";
+  else if (fp == _tor)
+    name = ">r";
+  else if (fp == _if)
+    name = "if";
+  else if (fp == _begin)
+    name = "begin";
+  else if (fp == _does)
+    name = "does>";
+  else
+    name = "";
+  is_str = 0;
 }
 
 void _does(Code* c)
@@ -744,41 +930,52 @@ void _begin(Code* c)
 void _loop(Code* c)
 {
   try {
-    do {
+    while (true) {
       for (Code* w : c->pf)
         w->exec();
-    } while ((rs[-1] += 1) < rs[-2]);
-    rs.pop();
-    rs.pop();
+      if (rs.size() < 2) break;
+      DU index = rs[-1] + 1;
+      DU limit = rs[-2];
+      rs[-1] = index;
+      if (index >= limit) {
+        rs.pop();
+        rs.pop();
+        break;
+      }
+    }
   }
   catch (int) {
+    if (rs.size() >= 2) {
+      rs.pop();
+      rs.pop();
+    }
   }
 }
 
 void _plus_loop(Code* c)
 {
   try {
-    do {
+    while (true) {
       for (Code* w : c->pf)
         w->exec();
+      if (rs.size() < 2) break;
       DU n = POP();
-      DU index = rs[-1];
+      DU index = rs[-1] + n;
       DU limit = rs[-2];
-      index += n;
       rs[-1] = index;
-      if (n >= 0) {
-        if (index >= limit) break;
+      bool exit_condition = (n >= 0) ? (index >= limit) : (index <= limit);
+      if (exit_condition) {
+        rs.pop();
+        rs.pop();
+        break;
       }
-      else {
-        if (index <= limit) break;
-      }
-    } while (true);
-    rs.pop();
-    rs.pop();
+    }
   }
   catch (int) {
-    rs.pop();
-    rs.pop();
+    if (rs.size() >= 2) {
+      rs.pop();
+      rs.pop();
+    }
   }
 }
 
@@ -786,12 +983,39 @@ void _abort(Code* c)
 {
   ss.clear();
   rs.clear();
-  throw runtime_error(c->name ? c->name : "Aborted");
+  throw std::runtime_error(c->name ? c->name : "Aborted");
 }
 
-string word(char delim)
+void unnest()
 {
-  string s;
+  bool found = false;
+  size_t marker_pos = 0;
+  for (int i = (int)rs.size() - 1; i >= 0; --i) {
+    if (rs[i] == MARKER_FRAME) {
+      marker_pos = i;
+      found = true;
+      break;
+    }
+  }
+  if (!found) {
+    current_pf = nullptr;
+    current_ip = 0;
+    if (!call_stack.empty()) call_stack.pop_back();
+    return;
+  }
+  while (rs.size() > marker_pos + 3)
+    rs.pop_back();
+  current_ip = (size_t)rs.back();
+  rs.pop_back();
+  current_pf = (const std::vector<Code*>*)rs.back();
+  rs.pop_back();
+  rs.pop_back();
+  if (!call_stack.empty()) call_stack.pop_back();
+}
+
+std::string read_word(char delim)
+{
+  std::string s;
   delim ? getline(fin, s, delim) : fin >> s;
   return s;
 }
@@ -812,11 +1036,9 @@ void ss_dump(DU base)
     if (dec && v < DU0) buf[--i] = '-';
     return &buf[i];
   };
-
   fout << "<" << ss.size() << "> ";
-  for (DU v : ss) {
+  for (DU v : ss)
     fout << rdx(v, base) << ' ';
-  }
 }
 
 void _see(Code* c)
@@ -849,12 +1071,10 @@ void _see(Code* c)
         _see(w);
       fout << "repeat ";
     }
-    else if (c->stage == 0) {
+    else if (c->stage == 0)
       fout << "until ";
-    }
-    else if (c->stage == 1) {
+    else if (c->stage == 1)
       fout << "again ";
-    }
     return;
   }
   if (strcmp(nm, "do") == 0) {
@@ -867,9 +1087,7 @@ void _see(Code* c)
     fout << nm << " ";
     return;
   }
-  if (nm[0] != '\0' && nm[0] != '\t') {
-    fout << nm << " ";
-  }
+  if (nm[0] != '\0' && nm[0] != '\t') fout << nm << " ";
 }
 
 void see(Code* c)
@@ -892,11 +1110,11 @@ void words()
 {
   const int WIDTH = 60;
   int x = 0;
-  fout << setbase(16) << setfill('0');
+  fout << std::setbase(16) << std::setfill('0');
   for (Code* w : dict) {
 #if CC_DEBUG > 1
-    fout << setw(4) << w->token << "> " << (UFP)w << ' ' << setw(8) << (U32)(UFP)w->xt << (w->is_str ? '"' : ':')
-         << (w->immd ? '*' : ' ') << w->name << "  " << ENDL;
+    fout << std::setw(4) << w->token << "> " << (UFP)w << ' ' << std::setw(8) << (U32)(UFP)w->xt
+         << (w->is_str ? '"' : ':') << (w->immd ? '*' : ' ') << w->name << "  " << ENDL;
 #else
     fout << "  " << w->name;
     x += (strlen(w->name) + 2);
@@ -906,31 +1124,28 @@ void words()
     }
 #endif
   }
-  fout << setfill(' ') << setbase(BASE) << ENDL;
+  fout << std::setfill(' ') << std::setbase(BASE) << ENDL;
 }
 
 void load(const char* fn)
 {
   void (*cb)(int, const char*) = fout_cb;
-  string in;
+  std::string in;
   getline(fin, in);
-  if (!forth_include(fn)) {
-    throw runtime_error("Can't open file");
-  }
+  if (!forth_include(fn)) throw std::runtime_error("Can't open file");
   fout_cb = cb;
   fin.clear();
   fin.str(in);
 }
 
-Code* find(string s)
+Code* find(std::string s)
 {
-  for (int i = dict.size() - 1; i >= 0; --i) {
+  for (int i = dict.size() - 1; i >= 0; --i)
     if (STRCMP(s.c_str(), dict[i]->name) == 0) return dict[i];
-  }
   return nullptr;
 }
 
-DU parse_number(string idiom)
+DU parse_number(std::string idiom)
 {
   const char* cs = idiom.c_str();
   int b = BASE;
@@ -956,11 +1171,11 @@ DU parse_number(string idiom)
 #else
   DU n = strtol(cs, &p, b);
 #endif
-  if (errno || *p != '\0') throw runtime_error("Undefined word");
+  if (errno || *p != '\0') throw std::runtime_error("Undefined word");
   return n;
 }
 
-void forth_core(string idiom)
+void forth_core(std::string idiom)
 {
   Code* w = find(idiom);
   if (w) {
@@ -981,14 +1196,14 @@ void forth_init()
 {
   const int sz = sizeof(rom) / sizeof(Code);
   dict.reserve(sz * 2);
-  for (int i = 0; i < sz; ++i) {
+  for (int i = 0; i < sz; ++i)
     DICT_PUSH((Code*)&rom[i]);
-  }
   heap.resize(HEAP_SIZE);
   heap_ptr = sizeof(DU);
   BASE = 10;
   pad_ptr = PAD_SIZE - 1;
   pad[PAD_SIZE - 1] = '\0';
+  call_stack.clear();
 }
 
 int forth_vm(const char* cmd, void (*hook)(int, const char*))
@@ -996,7 +1211,7 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
   static uint err_cnt = 0;
   bool error_occured = false;
 
-  auto next_token = [](const string& line, size_t start_pos) -> string {
+  auto next_token = [](const std::string& line, size_t start_pos) -> std::string {
     size_t i = start_pos;
     while (i < line.size() && isspace(line[i]))
       i++;
@@ -1007,37 +1222,36 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
     return line.substr(i, j - i);
   };
 
-  auto replace = [&](const string& line, const string& idiom, const string& exception_what) -> string {
-    string ret = line;
+  auto replace = [&](const std::string& line, const std::string& idiom,
+                   const std::string& exception_what) -> std::string {
+    std::string ret = line;
     if (exception_what != "Undefined word") {
       size_t pos = line.find(idiom);
-      if (pos != string::npos)
+      if (pos != std::string::npos)
         ret.replace(pos, idiom.length(), ">>>" + idiom + "<<<");
       else
         ret = ">>>" + idiom + "<<<";
     }
     else if (idiom == "see") {
       size_t pos = line.find("see");
-      if (pos != string::npos) {
-        string nxt = next_token(line, pos + 3);
+      if (pos != std::string::npos) {
+        std::string nxt = next_token(line, pos + 3);
         if (!nxt.empty()) {
           size_t nxt_pos = line.find(nxt, pos + 3);
-          if (nxt_pos != string::npos)
+          if (nxt_pos != std::string::npos)
             ret.replace(nxt_pos, nxt.length(), ">>>" + nxt + "<<<");
           else
             ret = ">>>" + nxt + "<<<";
         }
-        else {
+        else
           ret = line + " >>><<<";
-        }
       }
-      else {
+      else
         ret = ">>>" + idiom + "<<<";
-      }
     }
     else {
       size_t pos = line.find(idiom);
-      if (pos != string::npos)
+      if (pos != std::string::npos)
         ret.replace(pos, idiom.length(), ">>>" + idiom + "<<<");
       else
         ret = ">>>" + idiom + "<<<";
@@ -1052,20 +1266,32 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
     }
   };
 
-  auto outer = [&](const string& current_line) {
-    string idiom;
+  auto backtrace = [&]() {
+    fout << "Backtrace:" << ENDL;
+    for (auto it = call_stack.rbegin(); it != call_stack.rend(); ++it) {
+      const Code* c = *it;
+      fout << "$" << std::hex << (uintptr_t)c << " " << (c->name ? c->name : "(anon)") << std::dec << ENDL;
+    }
+  };
+
+  auto outer = [&](const std::string& current_line) {
+    std::string idiom;
     while (fin >> idiom) {
       try {
         forth_core(idiom);
       }
-      catch (exception& e) {
+      catch (std::exception& e) {
         err_cnt++;
         error_occured = true;
         fout << ENDL;
         fout << ":" << err_cnt << ": " << e.what() << ENDL;
-        string marked_line = replace(current_line, idiom, e.what());
+        std::string marked_line = replace(current_line, idiom, e.what());
         fout << marked_line << ENDL;
+        backtrace();
         output();
+        ss.clear();
+        rs.clear();
+        call_stack.clear();
         compile = false;
         getline(fin, idiom, '\n');
       }
@@ -1075,10 +1301,10 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
     }
   };
 
-  auto cb = [](int, const char* rst) { cout << rst; };
+  auto cb = [](int, const char* rst) { std::cout << rst; };
   fout_cb = hook ? hook : cb;
-  istringstream istm(cmd);
-  string line;
+  std::istringstream istm(cmd);
+  std::string line;
   fout.str("");
 
   while (getline(istm, line)) {
@@ -1088,12 +1314,10 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
   }
 
   if (!error_occured) {
-    if (compile) {
+    if (compile)
       fout << " compiled" << ENDL;
-    }
-    else {
+    else
       fout << " ok" << ENDL;
-    }
   }
   output();
   return 0;

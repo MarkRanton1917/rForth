@@ -86,7 +86,7 @@ struct Var : Code {
 };
 
 struct Str : Code {
-  Str(std::string s, int tok = 0, int len = 0);
+  Str(std::string s, int tok = 0, int len = 0, bool print = false);
 };
 
 struct Bran : Code {

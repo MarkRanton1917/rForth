@@ -435,13 +435,13 @@ const Code rom[] = {
   IMMD(".\"",
     {
       std::string s = read_word('"').substr(1);
-      last->append(new Str(s));
+      last->append(new Str(s, last->token, last->pf.size(), true));
     }),
   IMMD("s\"",
     {
       std::string s = read_word('"').substr(1);
       if (compile) {
-        last->append(new Str(s, last->token, last->pf.size()));
+        last->append(new Str(s, last->token, last->pf.size(), false));
       }
       else {
         int len = s.length();
@@ -827,12 +827,12 @@ Var::Var(DU d)
   q.push(d);
 }
 
-Str::Str(std::string s, int tok, int len)
+Str::Str(std::string s, int tok, int len, bool print)
   : Code(_str)
 {
   name = (new std::string(s))->c_str();
   token = (len << 16) | tok;
-  is_str = 1;
+  is_str = !print;
 }
 
 Bran::Bran(XT fp)

@@ -5,11 +5,61 @@
 #include <cstring>
 #include <iomanip>
 #include <vector>
-#include <chrono>
 #include <string>
 #include <cstdlib>
 #include <algorithm>
 #include <iostream>
+#include <cctype>
+#include <atomic>
+
+#if ARDUINO
+#include <Arduino.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
+#define MILLIS() (millis())
+#define SYS_TASK_CREATE(entry, name, stack, param, priority, handle) \
+        (xTaskCreate(entry, name, stack, param, priority, (TaskHandle_t*)handle) == pdPASS)
+#define SYS_TASK_DELETE(handle)    vTaskDelete((TaskHandle_t)handle)
+#define SYS_TASK_SUSPEND(handle)   vTaskSuspend((TaskHandle_t)handle)
+#define SYS_TASK_RESUME(handle)    vTaskResume((TaskHandle_t)handle)
+#define SYS_TASK_YIELD()           taskYIELD()
+#define SYS_SLEEP_MS(ms)           vTaskDelay(pdMS_TO_TICKS(ms))
+#define SYS_MUTEX_CREATE()         xSemaphoreCreateRecursiveMutex()
+#define SYS_MUTEX_LOCK(m)          xSemaphoreTakeRecursive(m, portMAX_DELAY)
+#define SYS_MUTEX_UNLOCK(m)        xSemaphoreGiveRecursive(m)
+#define SYS_MUTEX_TYPE             SemaphoreHandle_t
+#define SYS_SUSPEND_ALL_TASKS()    vTaskSuspendAll()
+#define SYS_RESUME_ALL_TASKS()     xTaskResumeAll()
+#define THREAD_LOCAL __thread
+#else
+#include <thread>
+#include <mutex>
+#include <chrono>
+#define MILLIS() (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count())
+#define SYS_TASK_CREATE(entry, name, stack, param, priority, handle) \
+        ([](void* p) { \
+            auto th = new std::thread(entry, p); \
+            *(handle) = (void*)th; \
+            return true; \
+        }(param))
+#define SYS_TASK_DELETE(handle)    do { \
+        std::thread* th = (std::thread*)handle; \
+        if (th && th->joinable()) { th->detach(); delete th; } \
+        handle = nullptr; \
+    } while(0)
+#define SYS_TASK_SUSPEND(handle)   ((void)0)
+#define SYS_TASK_RESUME(handle)    ((void)0)
+#define SYS_TASK_YIELD()           std::this_thread::yield()
+#define SYS_SLEEP_MS(ms)           std::this_thread::sleep_for(std::chrono::milliseconds(ms))
+#define SYS_MUTEX_CREATE()         new std::recursive_mutex()
+#define SYS_MUTEX_LOCK(m)          ((std::recursive_mutex*)m)->lock()
+#define SYS_MUTEX_UNLOCK(m)        ((std::recursive_mutex*)m)->unlock()
+#define SYS_MUTEX_TYPE             void*
+#define SYS_SUSPEND_ALL_TASKS()    ((void)0)
+#define SYS_RESUME_ALL_TASKS()     ((void)0)
+#define THREAD_LOCAL thread_local
+#endif
 
 #define DU0 0
 #define DU1 1
@@ -31,32 +81,12 @@
 #define STRCMP(a, b) (strcasecmp(a, b))
 #endif
 
-#define DO_WASM __EMSCRIPTEN__
-
-#if (ARDUINO || ESP32)
-#include <Arduino.h>
-#define to_string(i) std::string(String(i).c_str())
-#if ESP32
-#define analogWrite(c, v, mx) ledcWrite((c), (8191 / mx) * min((int)(v), mx))
-#endif
-#elif DO_WASM
-#include <emscripten.h>
-#define millis() EM_ASM_INT({ return Date.now(); })
-#define delay(ms) EM_ASM({ let t = setTimeout(() => clearTimeout(t), $0); }, ms)
-#define yield()
-#else
-#include <chrono>
-#include <thread>
-#define millis() std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()
-#define delay(ms) std::this_thread::sleep_for(std::chrono::milliseconds(ms))
-#define yield() std::this_thread::yield()
-#define PROGMEM
-#endif
-
 #define CODE(s, g) { s, #g, [](Code *c) { g; }, __COUNTER__ }
 #define IMMD(s, g) { s, #g, [](Code *c) { g; }, __COUNTER__ | Code::IMMD_FLAG }
-#define POP()  (ss.pop())
-#define PUSH(v) (ss.push(v))
+
+#define POP()  (current_ctx->ss.pop())
+#define PUSH(v) (current_ctx->ss.push(v))
+
 #define BOOL(f) ((f) ? -1 : 0)
 #define DICT_PUSH(c) (dict.push(last = (c)))
 #define DICT_POP()   (dict.pop(), last = dict[-1])
@@ -64,13 +94,32 @@
 #define BASE (*(DU*)(&(heap[0])))
 #define ALLOT(n) do { heap_ptr += (n); if (heap_ptr > heap.size()) heap.resize(heap_ptr + 1024); } while(0)
 
-std::vector<const Code*> call_stack;
-const std::vector<Code*>* current_pf = nullptr;
-size_t current_ip = 0;
+void _str(Code* c);
+void _lit(Code* c);
+void _var(Code* c);
+void _tor(Code* c);
+void _tor2(Code* c);
+void _if(Code* c);
+void _begin(Code* c);
+void _loop(Code* c);
+void _plus_loop(Code* c);
+void _abort(Code* c);
+void _does(Code* c);
+
+void unnest();
+std::string read_word(char delim = 0);
+void ss_dump(DU base);
+void see(Code* c);
+void words();
+void load(const char* fn);
+Code* find(std::string s);
+void output();
+template<typename Fn>
+void forth_print(Fn fn);
+void abort_all_tasks();
+void backtrace();
 
 FV<Code*> dict;
-FV<DU> ss;
-FV<DU> rs;
 std::vector<uint8_t> heap;
 size_t heap_ptr = 0;
 bool compile = false;
@@ -78,12 +127,168 @@ Code* last;
 
 std::istringstream fin;
 std::ostringstream fout;
-char pad[PAD_SIZE];
-size_t pad_ptr;
 void (*fout_cb)(int, const char*);
 
-const Code rom[] = {
-  CODE("bye", exit(0)),
+static THREAD_LOCAL ForthContext* current_ctx = nullptr;
+static std::vector<ForthContext*> all_contexts;
+static SYS_MUTEX_TYPE forth_mutex = nullptr;
+static std::atomic<bool> abort_requested { false };
+static std::string abort_message;
+static ForthContext* abort_ctx = nullptr;
+
+void backtrace()
+{
+  forth_print([&](std::ostringstream& os) {
+    os << "Backtrace:" << ENDL;
+    FV<Code*>* stack = nullptr;
+    if (abort_ctx != nullptr) {
+      stack = &abort_ctx->call_stack;
+    }
+    else {
+      stack = &current_ctx->call_stack;
+    }
+
+    for (auto it = stack->rbegin(); it != stack->rend(); ++it) {
+      const Code* c = *it;
+      os << "$" << std::hex << (uintptr_t)c << " " << (c->name ? c->name : "(anon)") << std::dec << ENDL;
+    }
+  });
+}
+
+void forth_task_entry(void* pvParameters)
+{
+  ForthContext* ctx = (ForthContext*)pvParameters;
+  current_ctx = ctx;
+
+  try {
+    while (true) {
+      if (!ctx->pf || ctx->ip >= ctx->pf->size()) break;
+      if (abort_requested.load()) break;
+
+      Code* w = (*ctx->pf)[ctx->ip++];
+      w->exec();
+      output();
+
+      if (ctx->handle == nullptr) break;
+      if (ctx->finished) break;
+      if (abort_requested.load()) break;
+    }
+  }
+  catch (std::exception& e) {
+    SYS_MUTEX_LOCK(forth_mutex);
+    abort_message = e.what();
+    abort_ctx = ctx;
+    SYS_MUTEX_UNLOCK(forth_mutex);
+    abort_requested.store(true);
+    output();
+  }
+  catch (...) {
+    SYS_MUTEX_LOCK(forth_mutex);
+    abort_message = "unknown error";
+    abort_ctx = ctx;
+    SYS_MUTEX_UNLOCK(forth_mutex);
+    abort_requested.store(true);
+    output();
+  }
+
+  output();
+
+  ctx->finished = true;
+  ctx->pf = nullptr;
+  ctx->ip = 0;
+  ctx->handle = nullptr;
+
+#if ARDUINO
+  vTaskDelete(NULL);
+#endif
+}
+
+void abort_all_tasks()
+{
+  SYS_MUTEX_LOCK(forth_mutex);
+  for (size_t i = 1; i < all_contexts.size(); ++i) {
+    ForthContext* ctx = all_contexts[i];
+    if (ctx && ctx->handle != nullptr) {
+      SYS_TASK_DELETE(ctx->handle);
+      ctx->handle = nullptr;
+    }
+    delete ctx;
+  }
+  all_contexts.resize(1);
+  ForthContext* ctx0 = all_contexts[0];
+  ctx0->ss.clear();
+  ctx0->rs.clear();
+  ctx0->call_stack.clear();
+  ctx0->pf = nullptr;
+  ctx0->ip = 0;
+  ctx0->finished = false;
+  ctx0->active = true;
+  current_ctx = ctx0;
+  abort_message.clear();
+  abort_ctx = nullptr;
+  abort_requested.store(false);
+  SYS_MUTEX_UNLOCK(forth_mutex);
+}
+
+void unnest()
+{
+  ForthContext* ctx = current_ctx;
+  bool found = false;
+  size_t marker_pos = 0;
+  for (int i = (int)ctx->rs.size() - 1; i >= 0; --i) {
+    if (ctx->rs[i] == MARKER_FRAME) {
+      marker_pos = i;
+      found = true;
+      break;
+    }
+  }
+  if (!found) {
+    ctx->pf = nullptr;
+    ctx->ip = 0;
+    if (!ctx->call_stack.empty()) ctx->call_stack.pop_back();
+    return;
+  }
+  while (ctx->rs.size() > marker_pos + 3)
+    ctx->rs.pop_back();
+  ctx->ip = (size_t)ctx->rs.back();
+  ctx->rs.pop_back();
+  ctx->pf = (const std::vector<Code*>*)ctx->rs.back();
+  ctx->rs.pop_back();
+  ctx->rs.pop_back();
+  if (!ctx->call_stack.empty()) ctx->call_stack.pop_back();
+}
+
+void Code::exec()
+{
+  if (xt != nullptr) {
+    current_ctx->call_stack.push_back(this);
+    xt(this);
+    current_ctx->call_stack.pop_back();
+  }
+  else {
+    ForthContext* ctx = current_ctx;
+    ctx->call_stack.push_back(this);
+    ctx->rs.push_back(MARKER_FRAME);
+    ctx->rs.push_back((DU)ctx->pf);
+    ctx->rs.push_back((DU)ctx->ip);
+    ctx->pf = &pf;
+    ctx->ip = 0;
+    while (ctx->pf == &pf && ctx->ip < pf.size()) {
+      Code* w = pf[ctx->ip++];
+      w->exec();
+      if (abort_requested.load()) {
+        SYS_MUTEX_LOCK(forth_mutex);
+        std::string msg = abort_message;
+        SYS_MUTEX_UNLOCK(forth_mutex);
+        throw std::runtime_error(msg);
+      }
+    }
+    if (ctx->pf == &pf) unnest();
+    if (!ctx->call_stack.empty() && ctx->call_stack.back() == this) ctx->call_stack.pop_back();
+  }
+}
+
+const Code rom[] = { CODE("bye", exit(0)),
   CODE("+",
     {
       DU b = POP();
@@ -313,8 +518,8 @@ const Code rom[] = {
   CODE("pick",
     {
       DU n = POP();
-      if (n < 0 || n >= (DU)ss.size()) throw std::runtime_error("pick out of range");
-      DU v = ss[ss.size() - 1 - n];
+      if (n < 0 || n >= (DU)current_ctx->ss.size()) throw std::runtime_error("pick out of range");
+      DU v = current_ctx->ss[current_ctx->ss.size() - 1 - n];
       PUSH(v);
     }),
   CODE("nip",
@@ -388,45 +593,70 @@ const Code rom[] = {
       PUSH(c);
       PUSH(d);
     }),
-  CODE(">r", rs.push(POP())),
-  CODE("r>", PUSH(rs.pop())),
-  CODE("r@", PUSH(rs[-1])),
-  CODE("base", PUSH(BASE)),
-  CODE("decimal", fout << std::setbase(BASE = 10)),
-  CODE("hex", fout << std::setbase(BASE = 16)),
-  CODE("bl", PUSH(0x20)),
-  CODE("cr", fout << ENDL),
-  CODE(".", fout << std::setbase(BASE) << POP() << " "),
+  CODE(">r", current_ctx->rs.push(POP())), CODE("r>", PUSH(current_ctx->rs.pop())),
+  CODE("r@", PUSH(current_ctx->rs[-1])), CODE("base", PUSH(BASE)),
+  CODE("decimal",
+    {
+      SYS_MUTEX_LOCK(forth_mutex);
+      fout << std::setbase(BASE = 10);
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }),
+  CODE("hex",
+    {
+      SYS_MUTEX_LOCK(forth_mutex);
+      fout << std::setbase(BASE = 16);
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }),
+  CODE("bl", PUSH(0x20)), CODE("cr", { forth_print([&](std::ostringstream& os) { os << ENDL; }); }),
+  CODE(".",
+    {
+      DU v = POP();
+      forth_print([&](std::ostringstream& os) { os << std::setbase(BASE) << v << " "; });
+    }),
   CODE(".r",
     {
       DU w = POP();
       DU v = POP();
-      fout << std::setbase(BASE) << std::setw(w) << v;
+      forth_print([&](std::ostringstream& os) { os << std::setbase(BASE) << std::setw(w) << v; });
     }),
   CODE("u.r",
     {
       DU w = POP();
       DU v = POP();
-      fout << std::setbase(BASE) << std::setw(w) << ABS(v);
+      forth_print([&](std::ostringstream& os) { os << std::setbase(BASE) << std::setw(w) << ABS(v); });
     }),
   CODE("key", PUSH(read_word()[0])),
-  CODE("emit", fout << (char)POP()),
-  CODE("space", fout << " "),
+  CODE("emit",
+    {
+      char ch = (char)POP();
+      forth_print([&](std::ostringstream& os) { os << ch; });
+    }),
+  CODE("space", { forth_print([&](std::ostringstream& os) { os << ' '; }); }),
   CODE("spaces",
     {
       DU n = POP();
-      fout << std::setw(n) << "";
+      forth_print([&](std::ostringstream& os) { os << std::setw(n) << ""; });
     }),
   CODE("type",
     {
       DU len = POP();
       const char* addr = reinterpret_cast<const char*>(POP());
-      for (int i = 0; i < len; i++) {
-        fout << addr[i];
-      }
+      forth_print([&](std::ostringstream& os) {
+        for (DU i = 0; i < len; ++i)
+          os << addr[i];
+      });
     }),
-  IMMD("(", read_word(')')),
-  IMMD(".(", fout << read_word(')')),
+  IMMD(".(",
+    {
+      std::string s = read_word(')');
+      forth_print([&](std::ostringstream& os) { os << s; });
+    }),
+  IMMD(".(",
+    {
+      SYS_MUTEX_LOCK(forth_mutex);
+      fout << read_word(')');
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }),
   IMMD("\\",
     {
       std::string s;
@@ -435,21 +665,25 @@ const Code rom[] = {
   IMMD(".\"",
     {
       std::string s = read_word('"').substr(1);
+      SYS_MUTEX_LOCK(forth_mutex);
       last->append(new Str(s, last->token, last->pf.size(), true));
+      SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   IMMD("s\"",
     {
       std::string s = read_word('"').substr(1);
       if (compile) {
+        SYS_MUTEX_LOCK(forth_mutex);
         last->append(new Str(s, last->token, last->pf.size(), false));
+        SYS_MUTEX_UNLOCK(forth_mutex);
       }
       else {
         int len = s.length();
         size_t copy_len = std::min(PAD_SIZE - 1, len);
-        pad_ptr = PAD_SIZE - 1 - len;
-        char* addr = &pad[pad_ptr];
+        current_ctx->pad_ptr = PAD_SIZE - 1 - len;
+        char* addr = &current_ctx->pad[current_ctx->pad_ptr];
         memcpy(addr, s.c_str(), copy_len);
-        pad[PAD_SIZE - 1] = '\0';
+        current_ctx->pad[PAD_SIZE - 1] = '\0';
         PUSH((DU)addr);
         PUSH(len);
       }
@@ -460,30 +694,38 @@ const Code rom[] = {
       if (compile) {
         Code* c = new Code((new std::string(s))->c_str(), "", _abort, 0);
         c->is_str = true;
+        SYS_MUTEX_LOCK(forth_mutex);
         last->append(c);
+        SYS_MUTEX_UNLOCK(forth_mutex);
       }
       else {
-        ss.clear();
-        rs.clear();
+        SYS_MUTEX_LOCK(forth_mutex);
+        abort_message = s;
+        abort_ctx = current_ctx;
+        SYS_MUTEX_UNLOCK(forth_mutex);
+        abort_requested.store(true);
         throw std::runtime_error(s);
       }
     }),
   CODE("abort",
     {
-      ss.clear();
-      rs.clear();
+      SYS_MUTEX_LOCK(forth_mutex);
+      abort_message = "Aborted";
+      abort_ctx = current_ctx;
+      SYS_MUTEX_UNLOCK(forth_mutex);
+      abort_requested.store(true);
       throw std::runtime_error("Aborted");
     }),
-  CODE("<#", { pad_ptr = PAD_SIZE - 1; }),
+  CODE("<#", { current_ctx->pad_ptr = PAD_SIZE - 1; }),
   CODE("#",
     {
       DU n = POP();
       DU base = BASE;
       DU digit = n % base;
       n /= base;
-      if (pad_ptr == 0) throw std::runtime_error("PAD overflow");
+      if (current_ctx->pad_ptr == 0) throw std::runtime_error("PAD overflow");
       char ch = (digit < 10) ? (char)('0' + digit) : (char)('A' + digit - 10);
-      pad[--pad_ptr] = ch;
+      current_ctx->pad[--current_ctx->pad_ptr] = ch;
       PUSH(n);
     }),
   CODE("#s",
@@ -493,9 +735,9 @@ const Code rom[] = {
       while (n != 0) {
         DU digit = n % base;
         n /= base;
-        if (pad_ptr == 0) throw std::runtime_error("PAD overflow");
+        if (current_ctx->pad_ptr == 0) throw std::runtime_error("PAD overflow");
         char ch = (digit < 10) ? (char)('0' + digit) : (char)('A' + digit - 10);
-        pad[--pad_ptr] = ch;
+        current_ctx->pad[--current_ctx->pad_ptr] = ch;
       }
       PUSH(n);
     }),
@@ -503,24 +745,33 @@ const Code rom[] = {
     {
       DU n = POP();
       (void)n;
-      PUSH((DU)(pad + pad_ptr));
-      PUSH(PAD_SIZE - pad_ptr - 1);
+      PUSH((DU)(current_ctx->pad + current_ctx->pad_ptr));
+      PUSH(PAD_SIZE - current_ctx->pad_ptr - 1);
     }),
   CODE("hold",
     {
       char ch = (char)POP();
-      if (pad_ptr == 0) throw std::runtime_error("PAD overflow");
-      pad[--pad_ptr] = ch;
+      if (current_ctx->pad_ptr == 0) throw std::runtime_error("PAD overflow");
+      current_ctx->pad[--current_ctx->pad_ptr] = ch;
     }),
-  IMMD("if", last->append(new Bran(_if)); DICT_PUSH(new Tmp())),
+  IMMD("if",
+    {
+      SYS_MUTEX_LOCK(forth_mutex);
+      last->append(new Bran(_if));
+      DICT_PUSH(new Tmp());
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }),
   IMMD("else",
     {
+      SYS_MUTEX_LOCK(forth_mutex);
       Code* b = BRAN_TGT();
       b->pf.merge(last->pf);
       b->stage = 1;
+      SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   IMMD("then",
     {
+      SYS_MUTEX_LOCK(forth_mutex);
       Code* b = BRAN_TGT();
       int s = b->stage;
       if (s == 0) {
@@ -531,81 +782,123 @@ const Code rom[] = {
         b->p1.merge(last->pf);
         if (s == 1) DICT_POP();
       }
+      SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  IMMD("begin", last->append(new Bran(_begin)); DICT_PUSH(new Tmp())),
+  IMMD("begin",
+    {
+      SYS_MUTEX_LOCK(forth_mutex);
+      last->append(new Bran(_begin));
+      DICT_PUSH(new Tmp());
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }),
   IMMD("while",
     {
+      SYS_MUTEX_LOCK(forth_mutex);
       Code* b = BRAN_TGT();
       b->pf.merge(last->pf);
       b->stage = 2;
+      SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   IMMD("repeat",
     {
+      SYS_MUTEX_LOCK(forth_mutex);
       Code* b = BRAN_TGT();
       b->p1.merge(last->pf);
       DICT_POP();
+      SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   IMMD("again",
     {
+      SYS_MUTEX_LOCK(forth_mutex);
       Code* b = BRAN_TGT();
       b->pf.merge(last->pf);
       DICT_POP();
       b->stage = 1;
+      SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   IMMD("until",
     {
+      SYS_MUTEX_LOCK(forth_mutex);
       Code* b = BRAN_TGT();
       b->pf.merge(last->pf);
       DICT_POP();
+      SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  IMMD("do", last->append(new Bran(_tor2)); last->append(new Bran(nullptr)); DICT_PUSH(new Tmp())),
-  CODE("i", PUSH(rs[-1])),
+  IMMD("do",
+    {
+      SYS_MUTEX_LOCK(forth_mutex);
+      last->append(new Bran(_tor2));
+      last->append(new Bran(nullptr));
+      DICT_PUSH(new Tmp());
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }),
+  CODE("i", PUSH(current_ctx->rs[-1])),
   CODE("leave",
     {
-      rs.pop();
-      rs.pop();
+      current_ctx->rs.pop();
+      current_ctx->rs.pop();
       unnest();
     }),
   IMMD("loop",
     {
+      SYS_MUTEX_LOCK(forth_mutex);
       Code* b = BRAN_TGT();
       b->xt = _loop;
       b->name = "loop";
       b->pf.merge(last->pf);
       DICT_POP();
+      SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   IMMD("+loop",
     {
+      SYS_MUTEX_LOCK(forth_mutex);
       Code* b = BRAN_TGT();
       b->xt = _plus_loop;
       b->name = "+loop";
       b->pf.merge(last->pf);
       DICT_POP();
+      SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  CODE("exit", unnest()),
-  CODE("[", compile = false),
-  CODE("]", compile = true),
+  CODE("exit", unnest()), CODE("[", compile = false), CODE("]", compile = true),
   CODE(":",
     {
+      SYS_MUTEX_LOCK(forth_mutex);
       DICT_PUSH(new Code(read_word()));
       compile = true;
+      SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  IMMD(";", compile = false),
+  IMMD(";",
+    {
+      SYS_MUTEX_LOCK(forth_mutex);
+      compile = false;
+      Code* exit_word = find("exit");
+      if (exit_word) last->append(exit_word);
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }),
   CODE("constant",
     {
+      SYS_MUTEX_LOCK(forth_mutex);
       DICT_PUSH(new Code(read_word()));
       DU v = POP();
       last->append(new Lit(v));
+      SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   CODE("variable",
     {
+      SYS_MUTEX_LOCK(forth_mutex);
       DICT_PUSH(new Code(read_word()));
       DU addr = (DU)&heap[heap_ptr];
       ALLOT(sizeof(DU));
       *(DU*)addr = 0;
       last->append(new Var(addr));
+      SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  CODE("immediate", last->immd = 1),
+  CODE("immediate",
+    {
+      SYS_MUTEX_LOCK(forth_mutex);
+      last->immd = 1;
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }),
   CODE("execute",
     {
       Code* w = reinterpret_cast<Code*>(POP());
@@ -613,10 +906,18 @@ const Code rom[] = {
     }),
   CODE("create",
     {
+      SYS_MUTEX_LOCK(forth_mutex);
       DICT_PUSH(new Code(read_word()));
       last->append(new Var((DU)&heap[heap_ptr]));
+      SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  IMMD("does>", last->append(new Bran(_does)); last->pf[-1]->token = last->token),
+  IMMD("does>",
+    {
+      SYS_MUTEX_LOCK(forth_mutex);
+      last->append(new Bran(_does));
+      last->pf[-1]->token = last->token;
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }),
   CODE("@",
     {
       DU addr = POP();
@@ -648,13 +949,15 @@ const Code rom[] = {
   CODE("?",
     {
       DU addr = POP();
-      fout << *(DU*)addr << " ";
+      forth_print([&](std::ostringstream& os) { os << *(DU*)addr << " "; });
     }),
   CODE(",",
     {
+      SYS_MUTEX_LOCK(forth_mutex);
       DU val = POP();
       *(DU*)&heap[heap_ptr] = val;
       ALLOT(sizeof(DU));
+      SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   CODE("cells",
     {
@@ -663,31 +966,75 @@ const Code rom[] = {
     }),
   CODE("allot",
     {
+      SYS_MUTEX_LOCK(forth_mutex);
       DU n = POP();
       ALLOT(n);
+      SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   CODE("here", PUSH((DU)&heap[heap_ptr])),
   CODE("'",
     {
-      Code* w = find(read_word());
-      if (w) PUSH(reinterpret_cast<DU>(w));
-    }),
-  CODE(".s", ss_dump(BASE)),
-  CODE("words", words()),
-  CODE("see",
-    {
-      Code* w = find(read_word());
-      if (w) {
-        see(w);
-      }
+      std::string s = read_word();
+      Code* w = find(s);
+      if (w)
+        PUSH(reinterpret_cast<DU>(w));
       else
         throw std::runtime_error("Undefined word");
     }),
-  CODE("depth", PUSH(ss.size())),
-  CODE("mstat", mem_stat()),
-  CODE("ms", PUSH(millis())),
+  IMMD("[']",
+    {
+      std::string s = read_word();
+      Code* w = find(s);
+      if (!w) throw std::runtime_error("Undefined word");
+      if (compile) {
+        SYS_MUTEX_LOCK(forth_mutex);
+        last->append(new Lit((DU)w));
+        SYS_MUTEX_UNLOCK(forth_mutex);
+      }
+      else
+        PUSH((DU)w);
+    }),
+  CODE(".s",
+    {
+      forth_print([&](std::ostringstream& os) {
+        char buf[34];
+        auto rdx = [&buf](DU v, int b) -> const char* {
+          int i = 33;
+          buf[i] = '\0';
+          int dec = (b == 10);
+          U32 n = dec ? UINT(ABS(v)) : UINT(v);
+          do {
+            U8 d = (U8)MOD(n, b);
+            n /= b;
+            buf[--i] = d > 9 ? (d - 10) + 'a' : d + '0';
+          } while (n && i);
+          if (dec && v < DU0) buf[--i] = '-';
+          return &buf[i];
+        };
+
+        os << "<" << current_ctx->ss.size() << "> ";
+        for (DU v : current_ctx->ss)
+          os << rdx(v, BASE) << ' ';
+      });
+    }),
+  CODE("words",
+    {
+      SYS_MUTEX_LOCK(forth_mutex);
+      words();
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }),
+  CODE("see",
+    {
+      SYS_MUTEX_LOCK(forth_mutex);
+      Code* w = find(read_word());
+      if (w)
+        see(w);
+      else
+        throw std::runtime_error("Undefined word");
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }),
+  CODE("depth", PUSH(current_ctx->ss.size())), CODE("mstat", mem_stat()), CODE("ms", PUSH(MILLIS())),
   CODE("rnd", PUSH(RND())),
-  CODE("delay", delay(UINT(POP()))),
   CODE("included",
     {
       size_t len = (size_t)(POP());
@@ -697,19 +1044,116 @@ const Code rom[] = {
     }),
   CODE("forget",
     {
+      SYS_MUTEX_LOCK(forth_mutex);
       Code* w = find(read_word());
-      if (!w) return;
+      if (!w) {
+        SYS_MUTEX_UNLOCK(forth_mutex);
+        return;
+      }
       int t = std::max((int)w->token, find("boot")->token + 1);
       for (int i = dict.size(); i > t; i--)
         DICT_POP();
+      SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   CODE("boot",
     {
+      SYS_MUTEX_LOCK(forth_mutex);
       int t = find("boot")->token + 1;
       for (int i = dict.size(); i > t; i--)
         DICT_POP();
+      SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-};
+  CODE("pause", { SYS_SLEEP_MS(1); }),
+  CODE("delay",
+    {
+      DU ms = POP();
+      if (ms > 0) SYS_SLEEP_MS(ms);
+    }),
+  CODE("stop",
+    {
+#if ARDUINO
+      SYS_TASK_SUSPEND(NULL);
+#else
+      current_ctx->finished = true;
+      if (current_ctx->handle != nullptr) {
+          SYS_TASK_DELETE(current_ctx->handle);
+      }
+#endif
+    }),
+  CODE("task",
+    {
+      DU xt_addr = POP();
+      Code* xt = reinterpret_cast<Code*>(xt_addr);
+      if (!xt) throw std::runtime_error("Invalid xt for task");
+      ForthContext* new_ctx = new ForthContext();
+      new_ctx->pf = &xt->pf;
+      new_ctx->ip = 0;
+      new_ctx->finished = false;
+      new_ctx->handle = nullptr;
+      new_ctx->active = true;
+      new_ctx->pad_ptr = PAD_SIZE - 1;
+      new_ctx->pad[PAD_SIZE - 1] = '\0';
+      SYS_MUTEX_LOCK(forth_mutex);
+      all_contexts.push_back(new_ctx);
+      size_t idx = all_contexts.size() - 1;
+      SYS_MUTEX_UNLOCK(forth_mutex);
+      bool ok = SYS_TASK_CREATE(forth_task_entry, "ForthTask", 4096, new_ctx, 1, &new_ctx->handle);
+      if (!ok) {
+        delete new_ctx;
+        throw std::runtime_error("Failed to create task");
+      }
+      PUSH((DU)idx);
+    }),
+  CODE("resume",
+    {
+      DU id = POP();
+      SYS_MUTEX_LOCK(forth_mutex);
+      if (id >= all_contexts.size()) {
+        SYS_MUTEX_UNLOCK(forth_mutex);
+        throw std::runtime_error("Invalid task id");
+      }
+      ForthContext* ctx = all_contexts[id];
+      SYS_MUTEX_UNLOCK(forth_mutex);
+      if (!ctx) throw std::runtime_error("Task context is null");
+#if ARDUINO
+      if (ctx->handle != nullptr) {
+        SYS_TASK_RESUME(ctx->handle);
+      }
+      else {
+        bool ok = SYS_TASK_CREATE(forth_task_entry, "ForthTask", 4096, ctx, 1, &ctx->handle);
+        if (!ok) throw std::runtime_error("Failed to resume task");
+      }
+#else
+      if (ctx->handle == nullptr || ctx->finished) {
+          ctx->finished = false;
+          ctx->ip = 0;
+          bool ok = SYS_TASK_CREATE(forth_task_entry, "ForthTask", 4096, ctx, 1, &ctx->handle);
+          if (!ok) throw std::runtime_error("Failed to resume task");
+      }
+#endif
+    }),
+  CODE("active?", {
+    DU id = POP();
+    SYS_MUTEX_LOCK(forth_mutex);
+    if (id >= all_contexts.size()) {
+      SYS_MUTEX_UNLOCK(forth_mutex);
+      throw std::runtime_error("Invalid task id");
+    }
+    ForthContext* ctx = all_contexts[id];
+    SYS_MUTEX_UNLOCK(forth_mutex);
+    bool active = false;
+    if (ctx) {
+#if ARDUINO
+      if (ctx->handle != nullptr) {
+        eTaskState state = eTaskGetState((TaskHandle_t)ctx->handle);
+        active = (state != eDeleted && state != eInvalid && !ctx->finished);
+      }
+#else
+      active = (ctx->handle != nullptr && !ctx->finished);
+#endif
+    }
+    PUSH(BOOL(active));
+  }) };
 
 template<typename T>
 FV<T>* FV<T>::merge(FV<T>& v)
@@ -718,13 +1162,11 @@ FV<T>* FV<T>::merge(FV<T>& v)
   v.clear();
   return this;
 }
-
 template<typename T>
 void FV<T>::push(T n)
 {
   this->push_back(n);
 }
-
 template<typename T>
 T FV<T>::pop()
 {
@@ -733,15 +1175,10 @@ T FV<T>::pop()
   this->pop_back();
   return n;
 }
-
 template<typename T>
 T& FV<T>::operator[](int i)
 {
-#if CC_DEBUG
-  return this->at(i < 0 ? (this->size() + i) : i);
-#else
   return std::vector<T>::operator[](i < 0 ? (this->size() + i) : i);
-#endif
 }
 
 Code::Code(const char* s, const char* d, XT fp, U32 a)
@@ -751,7 +1188,6 @@ Code::Code(const char* s, const char* d, XT fp, U32 a)
     attr(a)
 {
 }
-
 Code::Code(std::string s, bool n)
 {
   Code* w = find(s);
@@ -759,82 +1195,48 @@ Code::Code(std::string s, bool n)
   desc = "";
   xt = w ? w->xt : nullptr;
   token = n ? dict.size() : 0;
-  if (n && w) fout << "redefined " << s << " ";
+  if (n && w) {
+    SYS_MUTEX_LOCK(forth_mutex);
+    fout << "redefined " << s << " ";
+    SYS_MUTEX_UNLOCK(forth_mutex);
+  }
 }
-
 Code::Code(XT fp)
   : name(""),
     xt(fp),
     attr(0)
 {
 }
-
 Code::~Code()
 {
 }
-
 Code* Code::append(Code* w)
 {
   pf.push(w);
   return this;
 }
 
-void Code::exec()
-{
-  if (xt != nullptr) {
-    call_stack.push_back(this);
-    xt(this);
-    call_stack.pop_back();
-  }
-  else {
-    call_stack.push_back(this);
-    rs.push_back(MARKER_FRAME);
-    rs.push_back((DU)current_pf);
-    rs.push_back((DU)current_ip);
-    current_pf = &pf;
-    current_ip = 0;
-
-    while (true) {
-      if (!current_pf || current_ip >= current_pf->size()) {
-        unnest();
-        if (!current_pf) break;
-        continue;
-      }
-      Code* w = (*current_pf)[current_ip++];
-      w->exec();
-      if (!current_pf) break;
-    }
-    if (!call_stack.empty() && call_stack.back() == this) {
-      call_stack.pop_back();
-    }
-  }
-}
-
 Tmp::Tmp()
   : Code(NULL)
 {
 }
-
 Lit::Lit(DU d)
   : Code(_lit)
 {
   q.push(d);
 }
-
 Var::Var(DU d)
   : Code(_var)
 {
   q.push(d);
 }
-
-Str::Str(std::string s, int tok, int len, bool print)
+Str::Str(std::string s, int tok, int len, bool output)
   : Code(_str)
 {
   name = (new std::string(s))->c_str();
   token = (len << 16) | tok;
-  is_str = !print;
+  is_str = !output;
 }
-
 Bran::Bran(XT fp)
   : Code(fp)
 {
@@ -860,13 +1262,14 @@ Bran::Bran(XT fp)
 void _does(Code* c)
 {
   bool hit = false;
+  SYS_MUTEX_LOCK(forth_mutex);
   for (Code* w : dict[c->token]->pf) {
     if (hit) last->append(w);
     if (STRCMP(w->name, "does>") == 0) hit = true;
   }
+  SYS_MUTEX_UNLOCK(forth_mutex);
   throw 0;
 }
-
 void _str(Code* c)
 {
   if (c->is_str) {
@@ -874,33 +1277,28 @@ void _str(Code* c)
     PUSH(strlen(c->name));
   }
   else {
-    fout << c->name;
+    forth_print([&](std::ostringstream& os) { os << c->name; });
   }
 }
-
 void _lit(Code* c)
 {
   PUSH(c->q[0]);
 }
-
 void _var(Code* c)
 {
   PUSH(c->q[0]);
 }
-
 void _tor(Code* c)
 {
-  rs.push(POP());
+  current_ctx->rs.push(POP());
 }
-
 void _tor2(Code* c)
 {
   DU first = POP();
   DU limit = POP();
-  rs.push(limit);
-  rs.push(first);
+  current_ctx->rs.push(limit);
+  current_ctx->rs.push(first);
 }
-
 void _if(Code* c)
 {
   if (POP()) {
@@ -912,7 +1310,6 @@ void _if(Code* c)
       w->exec();
   }
 }
-
 void _begin(Code* c)
 {
   int b = c->stage;
@@ -926,91 +1323,64 @@ void _begin(Code* c)
       w->exec();
   }
 }
-
 void _loop(Code* c)
 {
   try {
     while (true) {
       for (Code* w : c->pf)
         w->exec();
-      if (rs.size() < 2) break;
-      DU index = rs[-1] + 1;
-      DU limit = rs[-2];
-      rs[-1] = index;
+      if (current_ctx->rs.size() < 2) break;
+      DU index = current_ctx->rs[-1] + 1;
+      DU limit = current_ctx->rs[-2];
+      current_ctx->rs[-1] = index;
       if (index >= limit) {
-        rs.pop();
-        rs.pop();
+        current_ctx->rs.pop();
+        current_ctx->rs.pop();
         break;
       }
     }
   }
   catch (int) {
-    if (rs.size() >= 2) {
-      rs.pop();
-      rs.pop();
+    if (current_ctx->rs.size() >= 2) {
+      current_ctx->rs.pop();
+      current_ctx->rs.pop();
     }
   }
 }
-
 void _plus_loop(Code* c)
 {
   try {
     while (true) {
       for (Code* w : c->pf)
         w->exec();
-      if (rs.size() < 2) break;
+      if (current_ctx->rs.size() < 2) break;
       DU n = POP();
-      DU index = rs[-1] + n;
-      DU limit = rs[-2];
-      rs[-1] = index;
+      DU index = current_ctx->rs[-1] + n;
+      DU limit = current_ctx->rs[-2];
+      current_ctx->rs[-1] = index;
       bool exit_condition = (n >= 0) ? (index >= limit) : (index <= limit);
       if (exit_condition) {
-        rs.pop();
-        rs.pop();
+        current_ctx->rs.pop();
+        current_ctx->rs.pop();
         break;
       }
     }
   }
   catch (int) {
-    if (rs.size() >= 2) {
-      rs.pop();
-      rs.pop();
+    if (current_ctx->rs.size() >= 2) {
+      current_ctx->rs.pop();
+      current_ctx->rs.pop();
     }
   }
 }
-
 void _abort(Code* c)
 {
-  ss.clear();
-  rs.clear();
-  throw std::runtime_error(c->name ? c->name : "Aborted");
-}
-
-void unnest()
-{
-  bool found = false;
-  size_t marker_pos = 0;
-  for (int i = (int)rs.size() - 1; i >= 0; --i) {
-    if (rs[i] == MARKER_FRAME) {
-      marker_pos = i;
-      found = true;
-      break;
-    }
-  }
-  if (!found) {
-    current_pf = nullptr;
-    current_ip = 0;
-    if (!call_stack.empty()) call_stack.pop_back();
-    return;
-  }
-  while (rs.size() > marker_pos + 3)
-    rs.pop_back();
-  current_ip = (size_t)rs.back();
-  rs.pop_back();
-  current_pf = (const std::vector<Code*>*)rs.back();
-  rs.pop_back();
-  rs.pop_back();
-  if (!call_stack.empty()) call_stack.pop_back();
+  SYS_MUTEX_LOCK(forth_mutex);
+  abort_message = c->name ? c->name : "Aborted";
+  abort_ctx = current_ctx;
+  SYS_MUTEX_UNLOCK(forth_mutex);
+  abort_requested.store(true);
+  throw std::runtime_error(abort_message);
 }
 
 std::string read_word(char delim)
@@ -1019,7 +1389,6 @@ std::string read_word(char delim)
   delim ? getline(fin, s, delim) : fin >> s;
   return s;
 }
-
 void ss_dump(DU base)
 {
   char buf[34];
@@ -1036,11 +1405,10 @@ void ss_dump(DU base)
     if (dec && v < DU0) buf[--i] = '-';
     return &buf[i];
   };
-  fout << "<" << ss.size() << "> ";
-  for (DU v : ss)
+  fout << "<" << current_ctx->ss.size() << "> ";
+  for (DU v : current_ctx->ss)
     fout << rdx(v, base) << ' ';
 }
-
 void _see(Code* c)
 {
   if (!c) return;
@@ -1089,7 +1457,6 @@ void _see(Code* c)
   }
   if (nm[0] != '\0' && nm[0] != '\t') fout << nm << " ";
 }
-
 void see(Code* c)
 {
   if (!c) {
@@ -1105,7 +1472,6 @@ void see(Code* c)
     _see(w);
   fout << "; ";
 }
-
 void words()
 {
   const int WIDTH = 60;
@@ -1126,7 +1492,6 @@ void words()
   }
   fout << std::setfill(' ') << std::setbase(BASE) << ENDL;
 }
-
 void load(const char* fn)
 {
   void (*cb)(int, const char*) = fout_cb;
@@ -1137,14 +1502,12 @@ void load(const char* fn)
   fin.clear();
   fin.str(in);
 }
-
 Code* find(std::string s)
 {
   for (int i = dict.size() - 1; i >= 0; --i)
     if (STRCMP(s.c_str(), dict[i]->name) == 0) return dict[i];
   return nullptr;
 }
-
 DU parse_number(std::string idiom)
 {
   const char* cs = idiom.c_str();
@@ -1175,21 +1538,31 @@ DU parse_number(std::string idiom)
   return n;
 }
 
-void forth_core(std::string idiom)
+void output()
 {
-  Code* w = find(idiom);
-  if (w) {
-    if (compile && !w->immd)
-      last->append(w);
-    else
-      w->exec();
-    return;
+  if (!fout_cb) return;
+
+  std::string out;
+  SYS_MUTEX_LOCK(forth_mutex);
+  out = fout.str();
+  if (!out.empty()) {
+    fout.str("");
+    fout.clear();
   }
-  DU n = parse_number(idiom);
-  if (compile)
-    last->append(new Lit(n));
-  else
-    ss.push(n);
+  SYS_MUTEX_UNLOCK(forth_mutex);
+
+  if (!out.empty()) {
+    fout_cb((int)out.size(), out.c_str());
+  }
+}
+
+template<typename Fn>
+void forth_print(Fn fn)
+{
+  SYS_MUTEX_LOCK(forth_mutex);
+  fn(fout);
+  SYS_MUTEX_UNLOCK(forth_mutex);
+  output();
 }
 
 void forth_init()
@@ -1201,9 +1574,45 @@ void forth_init()
   heap.resize(HEAP_SIZE);
   heap_ptr = sizeof(DU);
   BASE = 10;
-  pad_ptr = PAD_SIZE - 1;
-  pad[PAD_SIZE - 1] = '\0';
-  call_stack.clear();
+  forth_mutex = SYS_MUTEX_CREATE();
+  ForthContext* ctx0 = new ForthContext();
+  ctx0->pf = nullptr;
+  ctx0->ip = 0;
+  ctx0->finished = false;
+  ctx0->handle = nullptr;
+  ctx0->active = true;
+  ctx0->pad_ptr = PAD_SIZE - 1;
+  ctx0->pad[PAD_SIZE - 1] = '\0';
+  all_contexts.push_back(ctx0);
+  current_ctx = ctx0;
+}
+
+void forth_core(std::string idiom)
+{
+  Code* w;
+  SYS_MUTEX_LOCK(forth_mutex);
+  w = find(idiom);
+  SYS_MUTEX_UNLOCK(forth_mutex);
+  if (w) {
+    if (compile && !w->immd) {
+      SYS_MUTEX_LOCK(forth_mutex);
+      last->append(w);
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }
+    else {
+      w->exec();
+    }
+    return;
+  }
+  DU n = parse_number(idiom);
+  if (compile) {
+    SYS_MUTEX_LOCK(forth_mutex);
+    last->append(new Lit(n));
+    SYS_MUTEX_UNLOCK(forth_mutex);
+  }
+  else {
+    current_ctx->ss.push(n);
+  }
 }
 
 int forth_vm(const char* cmd, void (*hook)(int, const char*))
@@ -1259,41 +1668,31 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
     return ret;
   };
 
-  auto output = [&]() {
-    if (fout_cb && !fout.str().empty()) {
-      fout_cb((int)fout.str().length(), fout.str().c_str());
-      fout.str("");
-    }
-  };
-
-  auto backtrace = [&]() {
-    fout << "Backtrace:" << ENDL;
-    for (auto it = call_stack.rbegin(); it != call_stack.rend(); ++it) {
-      const Code* c = *it;
-      fout << "$" << std::hex << (uintptr_t)c << " " << (c->name ? c->name : "(anon)") << std::dec << ENDL;
-    }
-  };
-
+  std::string idiom;
   auto outer = [&](const std::string& current_line) {
-    std::string idiom;
     while (fin >> idiom) {
       try {
         forth_core(idiom);
+        output();
       }
       catch (std::exception& e) {
-        err_cnt++;
-        error_occured = true;
-        fout << ENDL;
-        fout << ":" << err_cnt << ": " << e.what() << ENDL;
-        std::string marked_line = replace(current_line, idiom, e.what());
-        fout << marked_line << ENDL;
+        forth_print([&](std::ostringstream& os) {
+          os << ENDL;
+          os << ":" << ++err_cnt << ": " << e.what() << ENDL;
+          std::string marked_line = replace(current_line, idiom, e.what());
+          os << marked_line << ENDL;
+        });
         backtrace();
-        output();
-        ss.clear();
-        rs.clear();
-        call_stack.clear();
+        error_occured = true;
+        current_ctx->ss.clear();
+        current_ctx->rs.clear();
+        current_ctx->call_stack.clear();
+        current_ctx->pf = nullptr;
+        current_ctx->ip = 0;
         compile = false;
         getline(fin, idiom, '\n');
+        abort_all_tasks();
+        return;
       }
       catch (int) {
         output();
@@ -1301,8 +1700,21 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
     }
   };
 
+#if ARDUINO
+  if (!hook) {
+    fout_cb = [](int len, const char* s) {
+      (void)len;
+      Serial.print(s);
+    };
+  }
+  else {
+    fout_cb = hook;
+  }
+#else
   auto cb = [](int, const char* rst) { std::cout << rst; };
   fout_cb = hook ? hook : cb;
+#endif
+
   std::istringstream istm(cmd);
   std::string line;
   fout.str("");
@@ -1311,13 +1723,26 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
     fin.clear();
     fin.str(line);
     outer(line);
+    if (abort_requested.load()) {
+      forth_print([&](std::ostringstream& os) {
+        os << ENDL;
+        os << ":" << ++err_cnt << ": " << abort_message << ENDL;
+        std::string marked_line = replace(line, idiom, abort_message);
+        os << marked_line << ENDL;
+      });
+      backtrace();
+      error_occured = true;
+      abort_all_tasks();
+      break;
+    }
   }
-
   if (!error_occured) {
+    SYS_MUTEX_LOCK(forth_mutex);
     if (compile)
       fout << " compiled" << ENDL;
     else
       fout << " ok" << ENDL;
+    SYS_MUTEX_UNLOCK(forth_mutex);
   }
   output();
   return 0;

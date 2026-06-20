@@ -23,30 +23,6 @@ struct FV : public std::vector<T> {
 struct Code;
 typedef void (*XT)(Code*);
 
-void _str(Code* c);
-void _lit(Code* c);
-void _var(Code* c);
-void _tor(Code* c);
-void _tor2(Code* c);
-void _if(Code* c);
-void _begin(Code* c);
-void _loop(Code* c);
-void _plus_loop(Code* c);
-void _abort(Code* c);
-void _does(Code* c);
-
-void unnest();
-std::string read_word(char delim = 0);
-void ss_dump(DU base);
-void see(Code* c);
-void words();
-void load(const char* fn);
-Code* find(std::string s);
-void forth_init();
-int forth_vm(const char* cmd, void (*hook)(int, const char*));
-
-extern FV<Code*> dict;
-
 struct Code {
   const static U32 IMMD_FLAG = 0x80000000;
   const char* name;
@@ -92,3 +68,20 @@ struct Str : Code {
 struct Bran : Code {
   Bran(XT fp);
 };
+
+struct ForthContext {
+  FV<DU> ss;
+  FV<DU> rs;
+  const std::vector<Code*>* pf;
+  size_t ip;
+  FV<Code*> call_stack;
+  bool finished;
+  void* handle;
+  bool active;
+  char pad[PAD_SIZE];
+  size_t pad_ptr;
+};
+
+void forth_init();
+int forth_vm(const char* cmd, void (*hook)(int, const char*));
+extern FV<Code*> dict;

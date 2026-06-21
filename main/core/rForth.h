@@ -29,6 +29,7 @@ typedef void (*XT)(Code*);
 
 struct Code {
   const static U32 IMMD_FLAG = 0x80000000;
+  const static U32 COMPILE_ONLY_FLAG = 0x40000000;
   const char* name;
   const char* desc;
   XT xt;
@@ -39,10 +40,11 @@ struct Code {
   union {
     U32 attr;
     struct {
-      U32 token  :28;
-      U32 stage  :2;
-      U32 is_str :1;
-      U32 immd   :1;
+      U32 token        :27;
+      U32 stage        :2;
+      U32 is_str       :1;
+      U32 compile_only :1;
+      U32 immd         :1;
     };
   };
   Code(const char* s, const char* d, XT fp, U32 a);

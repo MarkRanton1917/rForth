@@ -83,6 +83,7 @@
 
 #define CODE(s, g) { s, #g, [](Code *c) { g; }, __COUNTER__ }
 #define IMMD(s, g) { s, #g, [](Code *c) { g; }, __COUNTER__ | Code::IMMD_FLAG }
+#define COMP(s, g) { s, #g, [](Code *c) { g; }, __COUNTER__ | Code::IMMD_FLAG | Code::COMPILE_ONLY_FLAG }
 
 #define POP()  (current_ctx->ss.pop())
 #define PUSH(v) (current_ctx->ss.push(v))
@@ -782,14 +783,14 @@ const Code rom[] = { CODE("bye", exit(0)),
       if (current_ctx->pad_ptr == 0) throw std::runtime_error("PAD overflow");
       current_ctx->pad[--current_ctx->pad_ptr] = ch;
     }),
-  IMMD("if",
+  COMP("if",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       last->append(new Bran(_if));
       DICT_PUSH(new Tmp());
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  IMMD("else",
+  COMP("else",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = BRAN_TGT();
@@ -797,7 +798,7 @@ const Code rom[] = { CODE("bye", exit(0)),
       b->stage = 1;
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  IMMD("then",
+  COMP("then",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = BRAN_TGT();
@@ -812,14 +813,14 @@ const Code rom[] = { CODE("bye", exit(0)),
       }
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  IMMD("begin",
+  COMP("begin",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       last->append(new Bran(_begin));
       DICT_PUSH(new Tmp());
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  IMMD("while",
+  COMP("while",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = BRAN_TGT();
@@ -827,7 +828,7 @@ const Code rom[] = { CODE("bye", exit(0)),
       b->stage = 2;
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  IMMD("repeat",
+  COMP("repeat",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = BRAN_TGT();
@@ -835,7 +836,7 @@ const Code rom[] = { CODE("bye", exit(0)),
       DICT_POP();
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  IMMD("again",
+  COMP("again",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = BRAN_TGT();
@@ -844,7 +845,7 @@ const Code rom[] = { CODE("bye", exit(0)),
       b->stage = 1;
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  IMMD("until",
+  COMP("until",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = BRAN_TGT();
@@ -852,7 +853,7 @@ const Code rom[] = { CODE("bye", exit(0)),
       DICT_POP();
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  IMMD("do",
+  COMP("do",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       last->append(new Bran(_tor2));
@@ -861,13 +862,13 @@ const Code rom[] = { CODE("bye", exit(0)),
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   CODE("i", PUSH(current_ctx->rs[-1])),
-  CODE("leave",
+  COMP("leave",
     {
       current_ctx->rs.pop();
       current_ctx->rs.pop();
       unnest();
     }),
-  IMMD("loop",
+  COMP("loop",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = BRAN_TGT();
@@ -877,7 +878,7 @@ const Code rom[] = { CODE("bye", exit(0)),
       DICT_POP();
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  IMMD("+loop",
+  COMP("+loop",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = BRAN_TGT();
@@ -887,7 +888,7 @@ const Code rom[] = { CODE("bye", exit(0)),
       DICT_POP();
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  CODE("exit", unnest()), CODE("[", compile = false), CODE("]", compile = true),
+  CODE("exit", { unnest(); }), CODE("[", { compile = false; }), CODE("]", { compile = true; }),
   CODE(":",
     {
       SYS_MUTEX_LOCK(forth_mutex);
@@ -895,7 +896,7 @@ const Code rom[] = { CODE("bye", exit(0)),
       compile = true;
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  IMMD(";",
+  COMP(";",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       compile = false;
@@ -939,7 +940,7 @@ const Code rom[] = { CODE("bye", exit(0)),
       last->append(new Var((DU)&heap[heap_ptr]));
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  IMMD("does>",
+  COMP("does>",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       last->append(new Bran(_does));
@@ -1009,7 +1010,7 @@ const Code rom[] = { CODE("bye", exit(0)),
       else
         throw std::runtime_error("Undefined word");
     }),
-  IMMD("[']",
+  COMP("[']",
     {
       std::string s = read_word();
       Code* w = find(s);
@@ -1621,17 +1622,27 @@ void forth_core(std::string idiom)
   SYS_MUTEX_LOCK(forth_mutex);
   w = find(idiom);
   SYS_MUTEX_UNLOCK(forth_mutex);
+
   if (w) {
-    if (compile && !w->immd) {
-      SYS_MUTEX_LOCK(forth_mutex);
-      last->append(w);
-      SYS_MUTEX_UNLOCK(forth_mutex);
+    if (compile) {
+      if (!w->immd) {
+        SYS_MUTEX_LOCK(forth_mutex);
+        last->append(w);
+        SYS_MUTEX_UNLOCK(forth_mutex);
+      }
+      else {
+        w->exec();
+      }
     }
     else {
+      if (w->compile_only) {
+        throw std::runtime_error("Interpreting a compile-only word");
+      }
       w->exec();
     }
     return;
   }
+
   DU n = parse_number(idiom);
   if (compile) {
     SYS_MUTEX_LOCK(forth_mutex);

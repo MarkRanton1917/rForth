@@ -1,12 +1,12 @@
 idf_component_register(
-  SRCS 
-    "main.cpp"
+  SRCS
+    "main_esp.cpp"
     "core/ceforth.cpp"
     "platform/esp.cpp"
-  INCLUDE_DIRS 
+  INCLUDE_DIRS
     "."
     "core"
     "platform"
-  REQUIRES 
+  REQUIRES
     arduino
 )

@@ -2,15 +2,19 @@
 
 #include <vector>
 #include <string>
+#include <cstdint>
 
 typedef uint32_t U32;
 typedef int32_t S32;
 typedef uint16_t U16;
 typedef uint8_t U8;
 typedef uintptr_t UFP;
-typedef uint16_t IU;
 typedef int64_t DU2;
+#if ESP_PLATFORM
 typedef int32_t DU;
+#elif LINUX
+typedef int64_t DU;
+#endif
 
 template<typename T>
 struct FV : public std::vector<T> {

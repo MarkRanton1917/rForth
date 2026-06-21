@@ -12,7 +12,7 @@
 #include <cctype>
 #include <atomic>
 
-#if ARDUINO
+#if ESP_PLATFORM
 #include <Arduino.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -32,22 +32,22 @@
 #define SYS_SUSPEND_ALL_TASKS()    vTaskSuspendAll()
 #define SYS_RESUME_ALL_TASKS()     xTaskResumeAll()
 #define THREAD_LOCAL __thread
-#else
+#elif LINUX
 #include <thread>
 #include <mutex>
 #include <chrono>
 #define MILLIS() (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count())
 #define SYS_TASK_CREATE(entry, name, stack, param, priority, handle) \
-        ([](void* p) { \
-            auto th = new std::thread(entry, p); \
-            *(handle) = (void*)th; \
-            return true; \
-        }(param))
+        ([&]() { \
+          auto th = new std::thread(entry, param); \
+          *(handle) = (void*)th; \
+          return true; \
+        }())
 #define SYS_TASK_DELETE(handle)    do { \
-        std::thread* th = (std::thread*)handle; \
-        if (th && th->joinable()) { th->detach(); delete th; } \
-        handle = nullptr; \
-    } while(0)
+          std::thread* th = (std::thread*)handle; \
+          if (th && th->joinable()) { th->detach(); delete th; } \
+          handle = nullptr; \
+        } while(0)
 #define SYS_TASK_SUSPEND(handle)   ((void)0)
 #define SYS_TASK_RESUME(handle)    ((void)0)
 #define SYS_TASK_YIELD()           std::this_thread::yield()
@@ -198,23 +198,50 @@ void forth_task_entry(void* pvParameters)
   ctx->ip = 0;
   ctx->handle = nullptr;
 
-#if ARDUINO
+#if ESP_PLATFORM
   vTaskDelete(NULL);
 #endif
 }
 
 void abort_all_tasks()
 {
+  abort_requested.store(true);
+
+  const int MAX_WAIT_MS = 1000;
+  int waited = 0;
+  bool all_finished = false;
+
+  while (!all_finished && waited < MAX_WAIT_MS) {
+    all_finished = true;
+    SYS_MUTEX_LOCK(forth_mutex);
+    for (size_t i = 1; i < all_contexts.size(); ++i) {
+      ForthContext* ctx = all_contexts[i];
+      if (ctx && ctx->handle != nullptr && !ctx->finished) {
+        all_finished = false;
+        break;
+      }
+    }
+    SYS_MUTEX_UNLOCK(forth_mutex);
+
+    if (!all_finished) {
+      SYS_SLEEP_MS(10);
+      waited += 10;
+    }
+  }
+
   SYS_MUTEX_LOCK(forth_mutex);
   for (size_t i = 1; i < all_contexts.size(); ++i) {
     ForthContext* ctx = all_contexts[i];
-    if (ctx && ctx->handle != nullptr) {
-      SYS_TASK_DELETE(ctx->handle);
-      ctx->handle = nullptr;
+    if (ctx) {
+      if (ctx->handle != nullptr) {
+        SYS_TASK_DELETE(ctx->handle);
+        ctx->handle = nullptr;
+      }
+      delete ctx;
     }
-    delete ctx;
   }
   all_contexts.resize(1);
+
   ForthContext* ctx0 = all_contexts[0];
   ctx0->ss.clear();
   ctx0->rs.clear();
@@ -224,6 +251,7 @@ void abort_all_tasks()
   ctx0->finished = false;
   ctx0->active = true;
   current_ctx = ctx0;
+
   abort_message.clear();
   abort_ctx = nullptr;
   abort_requested.store(false);
@@ -1071,7 +1099,7 @@ const Code rom[] = { CODE("bye", exit(0)),
     }),
   CODE("stop",
     {
-#if ARDUINO
+#if ESP_PLATFORM
       SYS_TASK_SUSPEND(NULL);
 #else
       current_ctx->finished = true;
@@ -1115,7 +1143,7 @@ const Code rom[] = { CODE("bye", exit(0)),
       ForthContext* ctx = all_contexts[id];
       SYS_MUTEX_UNLOCK(forth_mutex);
       if (!ctx) throw std::runtime_error("Task context is null");
-#if ARDUINO
+#if ESP_PLATFORM
       if (ctx->handle != nullptr) {
         SYS_TASK_RESUME(ctx->handle);
       }
@@ -1143,7 +1171,7 @@ const Code rom[] = { CODE("bye", exit(0)),
     SYS_MUTEX_UNLOCK(forth_mutex);
     bool active = false;
     if (ctx) {
-#if ARDUINO
+#if ESP_PLATFORM
       if (ctx->handle != nullptr) {
         eTaskState state = eTaskGetState((TaskHandle_t)ctx->handle);
         active = (state != eDeleted && state != eInvalid && !ctx->finished);
@@ -1700,7 +1728,7 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
     }
   };
 
-#if ARDUINO
+#if ESP_PLATFORM
   if (!hook) {
     fout_cb = [](int len, const char* s) {
       (void)len;

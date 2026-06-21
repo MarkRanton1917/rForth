@@ -1,6 +1,4 @@
 cmake_minimum_required(VERSION 3.16)
-set (CMAKE_CXX_STANDARD 20)
-include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 execute_process(
   COMMAND git describe --tags --abbrev=7
@@ -20,77 +18,108 @@ if(NOT GIT_VERSION)
   )
 endif()
 
-add_definitions(
-  -DCC_DEBUG=1 
-  -DCASE_SENSITIVE=1 
-  -DPAD_SIZE=64
-  -DHEAP_SIZE=65536
-)
+if(DEFINED ESP_PLATFORM)
 
-add_definitions(
-  -DGIT_VERSION="${GIT_VERSION}" 
-  -DARDUINO_USB_MODE=1 
-  -DARDUINO_USB_CDC_ON_BOOT=1
-)
+  include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+  add_compile_definitions(
+    CC_DEBUG=1
+    CASE_SENSITIVE=1
+    PAD_SIZE=64
+    HEAP_SIZE=65536
+    GIT_VERSION="${GIT_VERSION}"
+    ARDUINO_USB_MODE=1
+    ARDUINO_USB_CDC_ON_BOOT=1
+  )
+  project(forth)
 
-project(forth)
-set(ESP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/components/arduino" CACHE PATH "Path to Arduino component")
+  set(LITTLEFS_IMAGE_SIZE  "0x200000" CACHE STRING "Image size")
+  set(LITTLEFS_BLOCK_SIZE  "4096"     CACHE STRING "Block size")
+  set(LITTLEFS_PAGE_SIZE   "256"      CACHE STRING "Page size")
 
-set(LITTLEFS_IMAGE_SIZE  "0x200000" CACHE STRING "Image size")
-set(LITTLEFS_BLOCK_SIZE  "4096"     CACHE STRING "Block size")
-set(LITTLEFS_PAGE_SIZE   "256"      CACHE STRING "Page size")
+  find_program(MKLITTLEFS mklittlefs)
+  if(NOT MKLITTLEFS)
+    message(FATAL_ERROR "mklittlefs not found")
+  endif()
 
-find_program(MKLITTLEFS mklittlefs)
-if(NOT MKLITTLEFS)
-    message(FATAL_ERROR "mklittefs not found")
+  set(SOURCE_DIR   ${CMAKE_SOURCE_DIR}/forth)
+  set(OUTPUT_IMAGE ${CMAKE_BINARY_DIR}/littlefs.bin)
+
+  add_custom_command(
+    OUTPUT ${OUTPUT_IMAGE}
+    COMMAND ${MKLITTLEFS}
+      -c ${SOURCE_DIR}
+      -b ${LITTLEFS_BLOCK_SIZE}
+      -p ${LITTLEFS_PAGE_SIZE}
+      -s ${LITTLEFS_IMAGE_SIZE}
+      ${OUTPUT_IMAGE}
+    DEPENDS ${SOURCE_DIR}
+    VERBATIM
+  )
+
+  add_custom_target(make_image ALL DEPENDS ${OUTPUT_IMAGE})
+
+  set(ESPTOOL_PORT "/dev/ttyACM0" CACHE STRING "Serial port")
+  set(ESPTOOL_BAUD "460800" CACHE STRING "Serial baudrate")
+  set(ESPTOOL_CHIP "esp32c3" CACHE STRING "Chip model")
+
+  add_custom_target(flash_all
+    COMMAND python3 -m esptool
+      --chip ${ESPTOOL_CHIP}
+      --port ${ESPTOOL_PORT}
+      -b ${ESPTOOL_BAUD}
+      --before default_reset
+      --after hard_reset
+      write_flash
+      --flash_mode dio
+      --flash_size 4MB
+      --flash_freq 80m
+      0x0        ${CMAKE_BINARY_DIR}/bootloader/bootloader.bin
+      0x8000     ${CMAKE_BINARY_DIR}/partition_table/partition-table.bin
+      0xe000     ${CMAKE_BINARY_DIR}/ota_data_initial.bin
+      0x10000    ${CMAKE_BINARY_DIR}/forth.bin
+      0x200000   ${CMAKE_BINARY_DIR}/littlefs.bin
+    DEPENDS
+      make_image
+      ${CMAKE_BINARY_DIR}/forth.bin
+      ${CMAKE_BINARY_DIR}/bootloader/bootloader.bin
+      ${CMAKE_BINARY_DIR}/partition_table/partition-table.bin
+      ${CMAKE_BINARY_DIR}/ota_data_initial.bin
+    VERBATIM
+  )
+else()
+
+  project(forth LANGUAGES C CXX)
+  set(CMAKE_CXX_STANDARD 20)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+  add_executable(forth
+    main/main_linux.cpp
+    main/core/ceforth.cpp
+    main/platform/linux.cpp
+  )
+
+  target_include_directories(forth PRIVATE
+    main
+    main/core
+    main/platform
+  )
+
+  target_compile_definitions(forth PRIVATE
+    CC_DEBUG=1
+    CASE_SENSITIVE=1
+    PAD_SIZE=64
+    HEAP_SIZE=65536
+    GIT_VERSION="${GIT_VERSION}"
+    LINUX=1
+  )
+
+  target_link_libraries(forth PRIVATE pthread)
+
+  add_custom_target(run
+    COMMAND ./forth
+    DEPENDS forth
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    COMMENT "Running forth on Linux"
+  )
+
 endif()
-
-set(SOURCE_DIR   ${CMAKE_SOURCE_DIR}/forth)
-set(OUTPUT_IMAGE ${CMAKE_BINARY_DIR}/littlefs.bin)
-
-if(NOT IS_DIRECTORY ${SOURCE_DIR})
-  message(WARNING "Folder '${SOURCE_DIR}' not exists")
-endif()
-
-add_custom_command(
-  OUTPUT ${OUTPUT_IMAGE}
-  COMMAND ${MKLITTLEFS}
-    -c ${SOURCE_DIR}
-    -b ${LITTLEFS_BLOCK_SIZE}
-    -p ${LITTLEFS_PAGE_SIZE}
-    -s ${LITTLEFS_IMAGE_SIZE}
-    ${OUTPUT_IMAGE}
-  DEPENDS ${SOURCE_DIR}
-  VERBATIM
-)
-
-add_custom_target(make_image ALL DEPENDS ${OUTPUT_IMAGE})
-
-set(ESPTOOL_PORT "/dev/ttyACM0" CACHE STRING "Serial port")
-set(ESPTOOL_BAUD "460800" CACHE STRING "Serial baudrate")
-set(ESPTOOL_CHIP "esp32c3" CACHE STRING "Chip model")
-
-add_custom_target(flash_all
-  COMMAND python3 -m esptool
-    --chip ${ESPTOOL_CHIP}
-    --port ${ESPTOOL_PORT}
-    -b ${ESPTOOL_BAUD}
-    --before default_reset
-    --after hard_reset
-    write_flash
-    --flash_mode dio
-    --flash_size 4MB
-    --flash_freq 80m
-    0x0        ${CMAKE_BINARY_DIR}/bootloader/bootloader.bin
-    0x8000     ${CMAKE_BINARY_DIR}/partition_table/partition-table.bin
-    0xe000     ${CMAKE_BINARY_DIR}/ota_data_initial.bin
-    0x10000    ${CMAKE_BINARY_DIR}/forth.bin
-    0x200000   ${CMAKE_BINARY_DIR}/littlefs.bin
-  DEPENDS
-    make_image
-    ${CMAKE_BINARY_DIR}/forth.bin
-    ${CMAKE_BINARY_DIR}/bootloader/bootloader.bin
-    ${CMAKE_BINARY_DIR}/partition_table/partition-table.bin
-    ${CMAKE_BINARY_DIR}/ota_data_initial.bin
-  VERBATIM
-)

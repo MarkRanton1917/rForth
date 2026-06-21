@@ -12,17 +12,15 @@ extern "C" void app_main()
   mem_stat();
 
   String tib;
-  tib.reserve(256); ///> reserve 256 bytes for input
+  tib.reserve(256);
 
   while (1) {
-    auto rsp_to_con = ///> redirect Forth response to console
-      [](int len, const char* rst) { Serial.print(rst); };
+    auto rsp_to_con = [](int len, const char* rst) { Serial.print(rst); };
 
     if (Serial.available()) {
       tib = Serial.readStringUntil('\n');
       tib.trim();
       Serial.print(tib + " ");
-
       forth_vm(tib.c_str(), rsp_to_con);
     }
     vTaskDelay(1);

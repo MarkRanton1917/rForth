@@ -81,6 +81,7 @@ struct ForthContext {
   const std::vector<Code*>* pf;
   size_t ip;
   FV<Code*> call_stack;
+  Code* xt;
   bool finished;
   void* handle;
   bool active;

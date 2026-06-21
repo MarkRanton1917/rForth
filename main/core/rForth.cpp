@@ -161,6 +161,11 @@ void forth_task_entry(void* pvParameters)
   ForthContext* ctx = (ForthContext*)pvParameters;
   current_ctx = ctx;
 
+  ctx->call_stack.clear();
+  if (ctx->xt) {
+    ctx->call_stack.push_back(ctx->xt);
+  }
+
   try {
     while (true) {
       if (!ctx->pf || ctx->ip >= ctx->pf->size()) break;
@@ -1115,6 +1120,7 @@ const Code rom[] = { CODE("bye", exit(0)),
       Code* xt = reinterpret_cast<Code*>(xt_addr);
       if (!xt) throw std::runtime_error("Invalid xt for task");
       ForthContext* new_ctx = new ForthContext();
+      new_ctx->xt = xt;
       new_ctx->pf = &xt->pf;
       new_ctx->ip = 0;
       new_ctx->finished = false;

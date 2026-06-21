@@ -294,6 +294,13 @@ void unnest()
 
 void Code::exec()
 {
+  std::string msg;
+  if (abort_requested.load()) {
+    SYS_MUTEX_LOCK(forth_mutex);
+    msg = abort_message;
+    SYS_MUTEX_UNLOCK(forth_mutex);
+    throw std::runtime_error(msg);
+  }
   if (xt != nullptr) {
     current_ctx->call_stack.push_back(this);
     xt(this);
@@ -312,7 +319,7 @@ void Code::exec()
       w->exec();
       if (abort_requested.load()) {
         SYS_MUTEX_LOCK(forth_mutex);
-        std::string msg = abort_message;
+        msg = abort_message;
         SYS_MUTEX_UNLOCK(forth_mutex);
         throw std::runtime_error(msg);
       }

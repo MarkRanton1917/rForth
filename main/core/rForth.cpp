@@ -1790,12 +1790,14 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
   }
   if (!error_occured) {
     SYS_MUTEX_LOCK(forth_mutex);
-    if (compile)
-      fout << " compiled" << ENDL;
-    else
-      fout << " ok" << ENDL;
+    forth_print([&](std::ostringstream& os) {
+      if (compile)
+        os << " compiled" << ENDL;
+      else
+        os << " ok" << ENDL;
+    });
+
     SYS_MUTEX_UNLOCK(forth_mutex);
   }
-  output();
   return 0;
 }

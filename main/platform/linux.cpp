@@ -19,10 +19,10 @@ void mem_stat()
     unsigned long total = info.totalram;
     unsigned long free_ram = info.freeram;
     double percent = (double)free_ram / total * 100.0;
-    printf("eForth [%s] on Linux, RAM %.2f%% free (%lu/%lu KB)\n", version, percent, free_ram / 1024, total / 1024);
+    printf("rForth [%s] on Linux, RAM %.2f%% free (%lu/%lu KB)\n", version, percent, free_ram / 1024, total / 1024);
   }
   else {
-    printf("eForth [%s] on Linux (memory info unavailable)\n", version);
+    printf("rForth [%s] on Linux (memory info unavailable)\n", version);
   }
 }
 

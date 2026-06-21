@@ -30,7 +30,7 @@ if(DEFINED ESP_PLATFORM)
     ARDUINO_USB_MODE=1
     ARDUINO_USB_CDC_ON_BOOT=1
   )
-  project(forth)
+  project(rForth)
 
   set(LITTLEFS_IMAGE_SIZE  "0x200000" CACHE STRING "Image size")
   set(LITTLEFS_BLOCK_SIZE  "4096"     CACHE STRING "Block size")
@@ -76,11 +76,11 @@ if(DEFINED ESP_PLATFORM)
       0x0        ${CMAKE_BINARY_DIR}/bootloader/bootloader.bin
       0x8000     ${CMAKE_BINARY_DIR}/partition_table/partition-table.bin
       0xe000     ${CMAKE_BINARY_DIR}/ota_data_initial.bin
-      0x10000    ${CMAKE_BINARY_DIR}/forth.bin
+      0x10000    ${CMAKE_BINARY_DIR}/rForth.bin
       0x200000   ${CMAKE_BINARY_DIR}/littlefs.bin
     DEPENDS
       make_image
-      ${CMAKE_BINARY_DIR}/forth.bin
+      ${CMAKE_BINARY_DIR}/rForth.bin
       ${CMAKE_BINARY_DIR}/bootloader/bootloader.bin
       ${CMAKE_BINARY_DIR}/partition_table/partition-table.bin
       ${CMAKE_BINARY_DIR}/ota_data_initial.bin
@@ -88,23 +88,23 @@ if(DEFINED ESP_PLATFORM)
   )
 else()
 
-  project(forth LANGUAGES C CXX)
+  project(rForth LANGUAGES C CXX)
   set(CMAKE_CXX_STANDARD 20)
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-  add_executable(forth
+  add_executable(rForth
     main/main_linux.cpp
-    main/core/ceforth.cpp
+    main/core/rForth.cpp
     main/platform/linux.cpp
   )
 
-  target_include_directories(forth PRIVATE
+  target_include_directories(rForth PRIVATE
     main
     main/core
     main/platform
   )
 
-  target_compile_definitions(forth PRIVATE
+  target_compile_definitions(rForth PRIVATE
     CC_DEBUG=1
     CASE_SENSITIVE=1
     PAD_SIZE=64
@@ -113,13 +113,13 @@ else()
     LINUX=1
   )
 
-  target_link_libraries(forth PRIVATE pthread)
+  target_link_libraries(rForth PRIVATE pthread)
 
   add_custom_target(run
-    COMMAND ./forth
-    DEPENDS forth
+    COMMAND ./rForth
+    DEPENDS rForth
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-    COMMENT "Running forth on Linux"
+    COMMENT "Running rForth on Linux"
   )
 
 endif()

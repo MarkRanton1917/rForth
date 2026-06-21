@@ -1,8 +1,8 @@
 idf_component_register(
   SRCS
-    "main_esp.cpp"
-    "core/ceforth.cpp"
-    "platform/esp.cpp"
+    "main_esp32.cpp"
+    "core/rForth.cpp"
+    "platform/esp32.cpp"
   INCLUDE_DIRS
     "."
     "core"

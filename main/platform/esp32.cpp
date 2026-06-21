@@ -11,7 +11,7 @@ void mem_stat()
   size_t t = heap_caps_get_total_size(MALLOC_CAP_8BIT);
   size_t f = heap_caps_get_free_size(MALLOC_CAP_8BIT);
   int64_t p = 1000L * f / t;
-  Serial.printf("eForth [%s] on Core[%d] at %ld MHz, RAM %f%% free (%d/%d KB)\n", version, xPortGetCoreID(),
+  Serial.printf("rForth [%s] on Core[%d] at %ld MHz, RAM %f%% free (%d/%d KB)\n", version, xPortGetCoreID(),
     getCpuFrequencyMhz(), static_cast<float>(p) * 0.1, f >> 10, t >> 10);
 }
 

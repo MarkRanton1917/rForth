@@ -27,8 +27,6 @@ if(DEFINED ESP_PLATFORM)
     PAD_SIZE=64
     HEAP_SIZE=65536
     GIT_VERSION="${GIT_VERSION}"
-    ARDUINO_USB_MODE=1
-    ARDUINO_USB_CDC_ON_BOOT=1
   )
   project(rForth)
 
@@ -110,7 +108,7 @@ else()
     PAD_SIZE=64
     HEAP_SIZE=65536
     GIT_VERSION="${GIT_VERSION}"
-    LINUX=1
+    LINUX_PLATFORM=1
   )
 
   target_link_libraries(rForth PRIVATE pthread)

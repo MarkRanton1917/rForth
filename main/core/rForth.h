@@ -4,6 +4,31 @@
 #include <string>
 #include <cstdint>
 
+#define DU0 0
+#define DU1 1
+#define UINT(v) (static_cast<U32>(v))
+#define MOD(m, n) ((m) % (n))
+#define ABS(v) (abs(v))
+#define ZEQ(v) ((v) == DU0)
+#define EQ(a, b) ((a) == (b))
+#define LT(a, b) ((a) < (b))
+#define GT(a, b) ((a) > (b))
+#define RND() (rand())
+#define ENDL "\r\n"
+#define MARKER_FRAME ((DU)0xDEADBEEF)
+
+#if CASE_SENSITIVE
+#define STRCMP(a, b) (strcmp(a, b))
+#else
+#include <strings.h>
+#define STRCMP(a, b) (strcasecmp(a, b))
+#endif
+
+#define CODE(s, g) { s, #g, [](Code *c) { g; }, __COUNTER__ }
+#define IMMD(s, g) { s, #g, [](Code *c) { g; }, __COUNTER__ | Code::IMMD_FLAG }
+#define COMP(s, g) { s, #g, [](Code *c) { g; }, __COUNTER__ | Code::IMMD_FLAG | Code::COMPILE_ONLY_FLAG }
+#define BOOL(f) ((f) ? -1 : 0)
+
 typedef uint32_t U32;
 typedef int32_t S32;
 typedef uint16_t U16;
@@ -12,7 +37,7 @@ typedef uintptr_t UFP;
 typedef int64_t DU2;
 #if ESP_PLATFORM
 typedef int32_t DU;
-#elif LINUX
+#elif LINUX_PLATFORM
 typedef int64_t DU;
 #endif
 
@@ -91,4 +116,12 @@ struct ForthContext {
 
 void forth_init();
 int forth_vm(const char* cmd, void (*hook)(int, const char*));
-extern FV<Code*> dict;
+void dict_add(const Code* words, size_t size);
+
+void ss_push(DU n);
+DU ss_pop();
+DU alloc_heap(const uint8_t* val, size_t size);
+
+// to implement
+void mem_stat();
+bool forth_include(const char* fn);

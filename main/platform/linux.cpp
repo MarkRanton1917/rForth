@@ -1,4 +1,4 @@
-#include "mcu.h"
+#include "rForth.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -9,7 +9,7 @@
 #include <unistd.h>
 #include <sys/sysinfo.h>
 
-FV<Code*> ops = {};
+const Code platform_rom[] = {};
 
 void mem_stat()
 {

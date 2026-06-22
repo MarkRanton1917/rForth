@@ -1,9 +1,8 @@
-#include "mcu.h"
+#include "rForth.h"
 
-#include <Arduino.h>
-#include <LittleFS.h>
-
-FV<Code*> ops = {};
+#include <freertos/FreeRTOS.h>
+#include <esp_heap_caps.h>
+#include <stdio.h>
 
 void mem_stat()
 {
@@ -11,32 +10,30 @@ void mem_stat()
   size_t t = heap_caps_get_total_size(MALLOC_CAP_8BIT);
   size_t f = heap_caps_get_free_size(MALLOC_CAP_8BIT);
   int64_t p = 1000L * f / t;
-  Serial.printf("rForth [%s] on Core[%d] at %ld MHz, RAM %f%% free (%d/%d KB)\n", version, xPortGetCoreID(),
-    getCpuFrequencyMhz(), static_cast<float>(p) * 0.1, f >> 10, t >> 10);
+  printf("rForth [%s] on Core[%d] at %d MHz, RAM %f%% free (%d/%d KB)\n", version, xPortGetCoreID(),
+    CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ, static_cast<float>(p) * 0.1, f >> 10, t >> 10);
 }
 
 bool forth_include(const char* fname)
 {
   auto dumb = [](int, const char*) {};
 
-  if (!LittleFS.begin()) {
-    return false;
-  }
+  FILE* file = fopen(fname, "r");
+  if (!file) return false;
 
-  File file = LittleFS.open(fname, "r");
-  if (!file) {
-    LittleFS.end();
-    return false;
-  }
-  while (file.available()) {
-    char cmd[256], *p = cmd, c;
-    while ((c = file.read()) != '\n' && p - cmd < 255) {
-      *p++ = c;
+  char cmd[256];
+  while (fgets(cmd, sizeof(cmd), file)) {
+    char* p = cmd;
+    while (*p) {
+      if (*p == '\r' || *p == '\n') {
+        *p = '\0';
+        break;
+      }
+      ++p;
     }
-    *p = '\0';
     forth_vm(cmd, dumb);
   }
-  file.close();
-  LittleFS.end();
+  fclose(file);
   return true;
 }
+

@@ -1,4 +1,4 @@
-#include "mcu.h"
+#include "rForth.h"
 
 #include <iostream>
 #include <string>
@@ -6,7 +6,6 @@
 int main()
 {
   forth_init();
-  dict_init();
   mem_stat();
 
   std::string tib;

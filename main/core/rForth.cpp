@@ -61,6 +61,7 @@
 #define THREAD_LOCAL thread_local
 #endif
 
+static void _comment(Code* c);
 static void _str(Code* c);
 static void _lit(Code* c);
 static void _var(Code* c);
@@ -483,12 +484,22 @@ static const Code rom[] = { CODE("bye", exit(0)),
   IMMD(".(",
     {
       std::string s = read_word(')');
-      forth_print([&](std::ostringstream& os) { os << s; });
+      if (compile) {
+        SYS_MUTEX_LOCK(forth_mutex);
+        last->append(new Comment(s, true));
+        SYS_MUTEX_UNLOCK(forth_mutex);
+        forth_print([&](std::ostringstream& os) { os << s; });
+      }
     }),
   IMMD("(",
     {
       std::string s;
       getline(fin, s, ')');
+      if (compile) {
+        SYS_MUTEX_LOCK(forth_mutex);
+        last->append(new Comment(s, false));
+        SYS_MUTEX_UNLOCK(forth_mutex);
+      }
     }),
   IMMD("\\",
     {
@@ -1391,6 +1402,10 @@ static void _does(Code* c)
   throw 0;
 }
 
+static void _comment(Code* c)
+{
+}
+
 static void _str(Code* c)
 {
   if (c->is_str) {
@@ -1523,10 +1538,37 @@ static std::string read_word(char delim)
 static void _see(Code* c)
 {
   if (!c) return;
+
+  if (c->xt == _comment) {
+    if (c->is_str) {
+      forth_print([&](std::ostringstream& os) { os << ".( " << c->name << ") "; });
+    }
+    else {
+      forth_print([&](std::ostringstream& os) { os << "( " << c->name << ") "; });
+    }
+    return;
+  }
+
   if (c->xt == _lit) {
     forth_print([&](std::ostringstream& os) { os << c->q[0] << " "; });
     return;
   }
+
+  if (c->xt == _str) {
+    if (c->is_str) {
+      forth_print([&](std::ostringstream& os) { os << "s\" " << c->name << "\" "; });
+    }
+    else {
+      forth_print([&](std::ostringstream& os) { os << ".\" " << c->name << "\" "; });
+    }
+    return;
+  }
+
+  if (c->xt == _abort && c->is_str) {
+    forth_print([&](std::ostringstream& os) { os << "abort\" " << c->name << "\" "; });
+    return;
+  }
+
   const char* nm = c->name ? c->name : "";
   if (strcmp(nm, "if") == 0) {
     forth_print([&](std::ostringstream& os) { os << "if "; });
@@ -1550,10 +1592,12 @@ static void _see(Code* c)
         _see(w);
       forth_print([&](std::ostringstream& os) { os << "repeat "; });
     }
-    else if (c->stage == 0)
+    else if (c->stage == 0) {
       forth_print([&](std::ostringstream& os) { os << "until "; });
-    else if (c->stage == 1)
+    }
+    else if (c->stage == 1) {
       forth_print([&](std::ostringstream& os) { os << "again "; });
+    }
     return;
   }
   if (strcmp(nm, "do") == 0) {
@@ -1580,8 +1624,14 @@ static void see(Code* c)
     return;
   }
   forth_print([&](std::ostringstream& os) { os << ": " << c->name << " "; });
-  for (Code* w : c->pf)
-    _see(w);
+
+  size_t n = c->pf.size();
+  if (n > 0 && c->pf[n - 1] && strcmp(c->pf[n - 1]->name, "exit") == 0) {
+    n--;
+  }
+  for (size_t i = 0; i < n; ++i) {
+    _see(c->pf[i]);
+  }
   forth_print([&](std::ostringstream& os) { os << "; "; });
 }
 
@@ -1781,6 +1831,13 @@ Code* Code::append(Code* w)
 {
   pf.push(w);
   return this;
+}
+
+Comment::Comment(const std::string& text, bool dot)
+  : Code(_comment)
+{
+  name = (new std::string(text))->c_str();
+  is_str = dot ? 1 : 0;
 }
 
 Tmp::Tmp()

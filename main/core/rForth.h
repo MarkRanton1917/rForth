@@ -81,6 +81,10 @@ struct Code {
   void exec();
 };
 
+struct Comment : Code {
+  Comment(const std::string& text, bool dot);
+};
+
 struct Tmp : Code {
   Tmp();
 };

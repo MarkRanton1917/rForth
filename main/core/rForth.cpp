@@ -1327,39 +1327,76 @@ static void unnest()
 
 void Code::exec()
 {
-  std::string msg;
-  if (abort_requested.load()) {
-    SYS_MUTEX_LOCK(forth_mutex);
-    msg = abort_message;
-    SYS_MUTEX_UNLOCK(forth_mutex);
-    throw std::runtime_error(msg);
-  }
+  struct Frame {
+    const std::vector<Code*>* pf;
+    size_t ip;
+    Code* word;
+  };
+
+  ForthContext* ctx = current_ctx;
+
   if (xt != nullptr) {
-    current_ctx->call_stack.push_back(this);
-    xt(this);
-    current_ctx->call_stack.pop_back();
-  }
-  else {
-    ForthContext* ctx = current_ctx;
-    ctx->call_stack.push_back(this);
-    ctx->rs.push_back(MARKER_FRAME);
-    ctx->rs.push_back((DU)ctx->pf);
-    ctx->rs.push_back((DU)ctx->ip);
-    ctx->pf = &pf;
-    ctx->ip = 0;
-    while (ctx->pf == &pf && ctx->ip < pf.size()) {
-      Code* w = pf[ctx->ip++];
-      w->exec();
-      if (abort_requested.load()) {
-        SYS_MUTEX_LOCK(forth_mutex);
-        msg = abort_message;
-        SYS_MUTEX_UNLOCK(forth_mutex);
-        throw std::runtime_error(msg);
-      }
+    if (abort_requested.load()) {
+      std::string msg;
+      SYS_MUTEX_LOCK(forth_mutex);
+      msg = abort_message;
+      SYS_MUTEX_UNLOCK(forth_mutex);
+      throw std::runtime_error(msg);
     }
-    if (ctx->pf == &pf) unnest();
-    if (!ctx->call_stack.empty() && ctx->call_stack.back() == this) ctx->call_stack.pop_back();
+    ctx->call_stack.push_back(this);
+    xt(this);
+    ctx->call_stack.pop_back();
+    return;
   }
+
+  std::vector<Frame> exec_stack;
+
+  ctx->rs.push_back(MARKER_FRAME);
+  ctx->rs.push_back((DU)ctx->pf);
+  ctx->rs.push_back((DU)ctx->ip);
+  ctx->call_stack.push_back(this);
+
+  ctx->pf = &pf;
+  ctx->ip = 0;
+
+  while (true) {
+    if (abort_requested.load()) {
+      std::string msg;
+      SYS_MUTEX_LOCK(forth_mutex);
+      msg = abort_message;
+      SYS_MUTEX_UNLOCK(forth_mutex);
+      throw std::runtime_error(msg);
+    }
+
+    while (ctx->pf == nullptr || ctx->ip >= ctx->pf->size()) {
+      if (exec_stack.empty()) goto done;
+
+      Frame& top = exec_stack.back();
+      if (!ctx->call_stack.empty() && ctx->call_stack.back() == top.word) ctx->call_stack.pop_back();
+
+      ctx->pf = top.pf;
+      ctx->ip = top.ip;
+      exec_stack.pop_back();
+    }
+
+    Code* w = (*ctx->pf)[ctx->ip++];
+
+    if (w->xt != nullptr) {
+      ctx->call_stack.push_back(w);
+      w->xt(w);
+      ctx->call_stack.pop_back();
+    }
+    else {
+      exec_stack.push_back(Frame { ctx->pf, ctx->ip, w });
+      ctx->call_stack.push_back(w);
+      ctx->pf = &w->pf;
+      ctx->ip = 0;
+    }
+  }
+
+done:
+  if (ctx->pf == &pf) unnest();
+  if (!ctx->call_stack.empty() && ctx->call_stack.back() == this) ctx->call_stack.pop_back();
 }
 
 static void _does(Code* c)

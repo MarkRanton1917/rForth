@@ -1145,18 +1145,7 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
     fin.clear();
     fin.str(line);
     outer(line);
-    if (abort_requested.load()) {
-      forth_print([&](std::ostringstream& os) {
-        os << ENDL;
-        os << ":" << ++err_cnt << ": " << abort_message << ENDL;
-        std::string marked_line = replace(line, idiom, abort_message);
-        os << marked_line << ENDL;
-      });
-      backtrace();
-      error_occured = true;
-      abort_all_tasks();
-      break;
-    }
+    if (error_occured) break;
   }
   if (!error_occured) {
     forth_print([&](std::ostringstream& os) {

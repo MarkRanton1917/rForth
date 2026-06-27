@@ -79,7 +79,6 @@ static void see(Code* c);
 static void words();
 static void load(const char* fn);
 static Code* find(std::string s);
-static void output();
 template<typename Fn>
 static void forth_print(Fn fn);
 static void abort_all_tasks();
@@ -94,8 +93,7 @@ static bool compile = false;
 static Code* last;
 
 static std::istringstream fin;
-static std::ostringstream fout;
-static void (*fout_cb)(int, const char*);
+static void (*fout_cb)(int, const char*) = nullptr;
 
 static THREAD_LOCAL ForthContext* current_ctx = nullptr;
 static FV<ForthContext*> all_contexts;
@@ -435,15 +433,13 @@ static const Code rom[] = { CODE("bye", exit(0)),
   CODE("r@", ss_push(current_ctx->rs[-1])), CODE("base", ss_push(BASE)),
   CODE("decimal",
     {
-      SYS_MUTEX_LOCK(forth_mutex);
-      fout << std::setbase(BASE = 10);
-      SYS_MUTEX_UNLOCK(forth_mutex);
+      BASE = 10;
+      forth_print([&](std::ostringstream& os) { os << std::setbase(BASE); });
     }),
   CODE("hex",
     {
-      SYS_MUTEX_LOCK(forth_mutex);
-      fout << std::setbase(BASE = 16);
-      SYS_MUTEX_UNLOCK(forth_mutex);
+      BASE = 16;
+      forth_print([&](std::ostringstream& os) { os << std::setbase(BASE); });
     }),
   CODE("bl", ss_push(0x20)), CODE("cr", { forth_print([&](std::ostringstream& os) { os << ENDL; }); }),
   CODE(".",
@@ -1092,7 +1088,6 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
     while (fin >> idiom) {
       try {
         forth_core(idiom);
-        output();
       }
       catch (std::exception& e) {
         forth_print([&](std::ostringstream& os) {
@@ -1114,7 +1109,6 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
         return;
       }
       catch (int) {
-        output();
       }
     }
   };
@@ -1136,7 +1130,6 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
 
   std::istringstream istm(cmd);
   std::string line;
-  fout.str("");
 
   while (getline(istm, line)) {
     fin.clear();
@@ -1156,15 +1149,12 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
     }
   }
   if (!error_occured) {
-    SYS_MUTEX_LOCK(forth_mutex);
     forth_print([&](std::ostringstream& os) {
       if (compile)
         os << " compiled" << ENDL;
       else
         os << " ok" << ENDL;
     });
-
-    SYS_MUTEX_UNLOCK(forth_mutex);
   }
   return 0;
 }
@@ -1205,11 +1195,6 @@ static void forth_task_entry(void* pvParameters)
 
       Code* w = (*ctx->pf)[ctx->ip++];
       w->exec();
-      output();
-
-      if (ctx->handle == nullptr) break;
-      if (ctx->finished) break;
-      if (abort_requested.load()) break;
     }
   }
   catch (std::exception& e) {
@@ -1218,7 +1203,6 @@ static void forth_task_entry(void* pvParameters)
     abort_ctx = ctx;
     SYS_MUTEX_UNLOCK(forth_mutex);
     abort_requested.store(true);
-    output();
   }
   catch (...) {
     SYS_MUTEX_LOCK(forth_mutex);
@@ -1226,10 +1210,7 @@ static void forth_task_entry(void* pvParameters)
     abort_ctx = ctx;
     SYS_MUTEX_UNLOCK(forth_mutex);
     abort_requested.store(true);
-    output();
   }
-
-  output();
 
   ctx->finished = true;
   ctx->pf = nullptr;
@@ -1543,86 +1524,92 @@ static void _see(Code* c)
 {
   if (!c) return;
   if (c->xt == _lit) {
-    fout << c->q[0] << " ";
+    forth_print([&](std::ostringstream& os) { os << c->q[0] << " "; });
     return;
   }
   const char* nm = c->name ? c->name : "";
   if (strcmp(nm, "if") == 0) {
-    fout << "if ";
+    forth_print([&](std::ostringstream& os) { os << "if "; });
     for (Code* w : c->pf)
       _see(w);
     if (c->stage == 1 && !c->p1.empty()) {
-      fout << "else ";
+      forth_print([&](std::ostringstream& os) { os << "else "; });
       for (Code* w : c->p1)
         _see(w);
     }
-    fout << "then ";
+    forth_print([&](std::ostringstream& os) { os << "then "; });
     return;
   }
   if (strcmp(nm, "begin") == 0) {
-    fout << "begin ";
+    forth_print([&](std::ostringstream& os) { os << "begin "; });
     for (Code* w : c->pf)
       _see(w);
     if (c->stage == 2) {
-      fout << "while ";
+      forth_print([&](std::ostringstream& os) { os << "while "; });
       for (Code* w : c->p1)
         _see(w);
-      fout << "repeat ";
+      forth_print([&](std::ostringstream& os) { os << "repeat "; });
     }
     else if (c->stage == 0)
-      fout << "until ";
+      forth_print([&](std::ostringstream& os) { os << "until "; });
     else if (c->stage == 1)
-      fout << "again ";
+      forth_print([&](std::ostringstream& os) { os << "again "; });
     return;
   }
   if (strcmp(nm, "do") == 0) {
-    fout << "do ";
+    forth_print([&](std::ostringstream& os) { os << "do "; });
     return;
   }
   if (strcmp(nm, "loop") == 0 || strcmp(nm, "+loop") == 0) {
     for (Code* w : c->pf)
       _see(w);
-    fout << nm << " ";
+    forth_print([&](std::ostringstream& os) { os << nm << " "; });
     return;
   }
-  if (nm[0] != '\0' && nm[0] != '\t') fout << nm << " ";
+  if (nm[0] != '\0' && nm[0] != '\t') forth_print([&](std::ostringstream& os) { os << nm << " "; });
 }
 
 static void see(Code* c)
 {
   if (!c) {
-    fout << "  -> { not found }";
+    forth_print([&](std::ostringstream& os) { os << "  -> { not found }"; });
     return;
   }
   if (c->xt) {
-    fout << "  ->{ " << c->desc << "; } ";
+    forth_print([&](std::ostringstream& os) { os << "  ->{ " << c->desc << "; } "; });
     return;
   }
-  fout << ": " << c->name << " ";
+  forth_print([&](std::ostringstream& os) { os << ": " << c->name << " "; });
   for (Code* w : c->pf)
     _see(w);
-  fout << "; ";
+  forth_print([&](std::ostringstream& os) { os << "; "; });
 }
 
 static void words()
 {
   const int WIDTH = 60;
   int x = 0;
-  fout << std::setbase(16) << std::setfill('0');
+  std::string output;
   for (Code* w : dict) {
 #if CC_DEBUG > 1
-    fout << std::setw(4) << w->token << "> " << (UFP)w << ' ' << std::setw(8) << (U32)(UFP)w->xt
+    forth_print([&](std::ostringstream& os) {
+      os << std::setw(4) << w->token << "> " << (UFP)w << ' ' << std::setw(8) << (U32)(UFP)w->xt
          << (w->is_str ? '"' : ':') << (w->immd ? '*' : ' ') << w->name << "  " << ENDL;
+    });
 #else
-    fout << "  " << w->name;
-    x += (strlen(w->name) + 2);
+    std::string name = w->name ? w->name : "";
+    output += "  " + name;
+    x += (name.length() + 2);
     if (x > WIDTH) {
-      fout << ENDL;
+      forth_print([&](std::ostringstream& os) { os << output << ENDL; });
+      output.clear();
       x = 0;
     }
 #endif
   }
-  fout << std::setfill(' ') << std::setbase(BASE) << ENDL;
+  if (!output.empty()) {
+    forth_print([&](std::ostringstream& os) { os << output << ENDL; });
+  }
 }
 
 static void load(const char* fn)
@@ -1673,31 +1660,17 @@ static DU parse_number(std::string idiom)
   return n;
 }
 
-static void output()
-{
-  if (!fout_cb) return;
-
-  std::string out;
-  SYS_MUTEX_LOCK(forth_mutex);
-  out = fout.str();
-  if (!out.empty()) {
-    fout.str("");
-    fout.clear();
-  }
-  SYS_MUTEX_UNLOCK(forth_mutex);
-
-  if (!out.empty()) {
-    fout_cb((int)out.size(), out.c_str());
-  }
-}
-
 template<typename Fn>
 static void forth_print(Fn fn)
 {
   SYS_MUTEX_LOCK(forth_mutex);
-  fn(fout);
+  std::ostringstream os;
+  fn(os);
+  std::string s = os.str();
+  if (!s.empty() && fout_cb) {
+    fout_cb((int)s.size(), s.c_str());
+  }
   SYS_MUTEX_UNLOCK(forth_mutex);
-  output();
 }
 
 static void forth_core(std::string idiom)
@@ -1789,9 +1762,7 @@ Code::Code(std::string s, bool n)
   xt = w ? w->xt : nullptr;
   token = n ? dict.size() : 0;
   if (n && w) {
-    SYS_MUTEX_LOCK(forth_mutex);
-    fout << "redefined " << s << " ";
-    SYS_MUTEX_UNLOCK(forth_mutex);
+    forth_print([&](std::ostringstream& os) { os << "redefined " << s << " "; });
   }
 }
 

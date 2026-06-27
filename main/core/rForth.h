@@ -1,7 +1,5 @@
 #pragma once
 
-#include "version.h"
-
 #include <vector>
 #include <string>
 #include <cstdint>

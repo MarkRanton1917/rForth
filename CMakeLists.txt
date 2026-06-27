@@ -112,9 +112,8 @@ else()
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
   add_executable(rForth
-    main/main_linux.cpp
-    main/core/rForth.cpp
     main/platform/linux.cpp
+    main/core/rForth.cpp
   )
 
   target_include_directories(rForth PRIVATE
@@ -136,7 +135,7 @@ else()
   generate_version_header()
 
   add_custom_target(run
-    COMMAND ./rForth
+    COMMAND ./${CMAKE_BINARY_DIR}/rForth
     DEPENDS rForth
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     COMMENT "Running rForth on Linux"

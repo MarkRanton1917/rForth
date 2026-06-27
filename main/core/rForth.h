@@ -66,9 +66,8 @@ struct Code {
   union {
     U32 attr;
     struct {
-      U32 token        :27;
+      U32 token        :28;
       U32 stage        :2;
-      U32 is_str       :1;
       U32 compile_only :1;
       U32 immd         :1;
     };

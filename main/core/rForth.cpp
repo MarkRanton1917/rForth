@@ -531,8 +531,7 @@ static const Code rom[] = { CODE("bye", exit(0)),
     {
       std::string s = read_word('"').substr(1);
       if (compile) {
-        Code* c = new Code((new std::string(s))->c_str(), "", _abort, 0);
-        c->is_str = true;
+        Code* c = new Code("abort\"", (new std::string(s))->c_str(), _abort, 0);
         SYS_MUTEX_LOCK(forth_mutex);
         last->append(c);
         SYS_MUTEX_UNLOCK(forth_mutex);
@@ -1408,12 +1407,12 @@ static void _comment(Code* c)
 
 static void _str(Code* c)
 {
-  if (c->is_str) {
-    ss_push((DU)c->name);
-    ss_push(strlen(c->name));
+  if (strcmp(c->name, "s\"") == 0) {
+    ss_push((DU)c->desc);
+    ss_push(strlen(c->desc));
   }
   else {
-    forth_print([&](std::ostringstream& os) { os << c->name; });
+    forth_print([&](std::ostringstream& os) { os << c->desc; });
   }
 }
 
@@ -1521,7 +1520,7 @@ static void _plus_loop(Code* c)
 static void _abort(Code* c)
 {
   SYS_MUTEX_LOCK(forth_mutex);
-  abort_message = c->name ? c->name : "Aborted";
+  abort_message = c->desc ? c->desc : "Aborted";
   abort_ctx = current_ctx;
   SYS_MUTEX_UNLOCK(forth_mutex);
   abort_requested.store(true);
@@ -1540,11 +1539,11 @@ static void _see(Code* c)
   if (!c) return;
 
   if (c->xt == _comment) {
-    if (c->is_str) {
-      forth_print([&](std::ostringstream& os) { os << ".( " << c->name << ") "; });
+    if (strcmp(c->name, ".(") == 0) {
+      forth_print([&](std::ostringstream& os) { os << ".(" << c->desc << ") "; });
     }
     else {
-      forth_print([&](std::ostringstream& os) { os << "( " << c->name << ") "; });
+      forth_print([&](std::ostringstream& os) { os << "( " << c->desc << " ) "; });
     }
     return;
   }
@@ -1555,17 +1554,22 @@ static void _see(Code* c)
   }
 
   if (c->xt == _str) {
-    if (c->is_str) {
-      forth_print([&](std::ostringstream& os) { os << "s\" " << c->name << "\" "; });
+    if (strcmp(c->name, "s\"") == 0) {
+      forth_print([&](std::ostringstream& os) { os << "s\" " << c->desc << "\" "; });
     }
     else {
-      forth_print([&](std::ostringstream& os) { os << ".\" " << c->name << "\" "; });
+      forth_print([&](std::ostringstream& os) { os << ".\" " << c->desc << "\" "; });
     }
     return;
   }
 
-  if (c->xt == _abort && c->is_str) {
-    forth_print([&](std::ostringstream& os) { os << "abort\" " << c->name << "\" "; });
+  if (c->xt == _abort) {
+    if (strcmp(c->name, "abort\"") == 0) {
+      forth_print([&](std::ostringstream& os) { os << "abort\" " << c->desc << "\" "; });
+    }
+    else {
+      forth_print([&](std::ostringstream& os) { os << "abort "; });
+    }
     return;
   }
 
@@ -1637,14 +1641,15 @@ static void see(Code* c)
 
 static void words()
 {
-  const int WIDTH = 60;
+  const int WIDTH = 32;
   int x = 0;
   std::string output;
   for (Code* w : dict) {
 #if CC_DEBUG > 1
     forth_print([&](std::ostringstream& os) {
       os << std::setw(4) << w->token << "> " << (UFP)w << ' ' << std::setw(8) << (U32)(UFP)w->xt
-         << (w->is_str ? '"' : ':') << (w->immd ? '*' : ' ') << w->name << "  " << ENDL;
+         << (strcmp(w->name, ".\"") == 0 || strcmp(w->name, "s\"") == 0 ? '"' : ':') << (w->immd ? '*' : ' ') << w->name
+         << "  " << ENDL;
     });
 #else
     std::string name = w->name ? w->name : "";
@@ -1836,8 +1841,8 @@ Code* Code::append(Code* w)
 Comment::Comment(const std::string& text, bool dot)
   : Code(_comment)
 {
-  name = (new std::string(text))->c_str();
-  is_str = dot ? 1 : 0;
+  name = (new std::string(dot ? ".(" : "("))->c_str();
+  desc = (new std::string(text))->c_str();
 }
 
 Tmp::Tmp()
@@ -1860,9 +1865,9 @@ Var::Var(DU d)
 Str::Str(std::string s, int tok, int len, bool output)
   : Code(_str)
 {
-  name = (new std::string(s))->c_str();
+  name = (new std::string(output ? ".\"" : "s\""))->c_str();
+  desc = (new std::string(s))->c_str();
   token = (len << 16) | tok;
-  is_str = !output;
 }
 
 Bran::Bran(XT fp)
@@ -1884,5 +1889,4 @@ Bran::Bran(XT fp)
     name = "does>";
   else
     name = "";
-  is_str = 0;
 }

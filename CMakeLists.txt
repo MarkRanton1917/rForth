@@ -44,6 +44,7 @@ if(DEFINED ESP_PLATFORM)
       CASE_SENSITIVE=1
       PAD_SIZE=64
       HEAP_SIZE=65536
+      USE_FLOAT=1
   )
   project(rForth)
 
@@ -127,6 +128,7 @@ else()
     CASE_SENSITIVE=1
     PAD_SIZE=64
     HEAP_SIZE=65536
+    USE_FLOAT=1
     LINUX_PLATFORM=1
   )
 
@@ -135,7 +137,7 @@ else()
   generate_version_header()
 
   add_custom_target(run
-    COMMAND ./${CMAKE_BINARY_DIR}/rForth
+    COMMAND ./rForth
     DEPENDS rForth
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     COMMENT "Running rForth on Linux"

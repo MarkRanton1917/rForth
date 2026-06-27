@@ -40,6 +40,9 @@ typedef int32_t DU;
 #elif LINUX_PLATFORM
 typedef int64_t DU;
 #endif
+#if USE_FLOAT
+typedef float DF;
+#endif
 
 template<typename T>
 struct FV : public std::vector<T> {
@@ -92,6 +95,13 @@ struct Lit : Code {
   Lit(DU d);
 };
 
+#if USE_FLOAT
+struct FLit : Code {
+  DF val;
+  FLit(DF v);
+};
+#endif
+
 struct Var : Code {
   Var(DU d);
 };
@@ -107,6 +117,9 @@ struct Bran : Code {
 struct ForthContext {
   FV<DU> ss;
   FV<DU> rs;
+#if USE_FLOAT
+  FV<DF> fs;
+#endif
   const FV<Code*>* pf;
   size_t ip;
   FV<Code*> call_stack;
@@ -125,6 +138,10 @@ void dict_add(const Code* words, size_t size);
 void ss_push(DU n);
 DU ss_pop();
 DU alloc_heap(const uint8_t* val, size_t size);
+#if USE_FLOAT
+void fs_push(DF n);
+DF fs_pop();
+#endif
 
 // to implement
 void mem_stat();

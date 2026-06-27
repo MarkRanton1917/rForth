@@ -61,6 +61,13 @@
 #define THREAD_LOCAL thread_local
 #endif
 
+#if USE_FLOAT
+#include <cmath>
+#endif
+
+#if USE_FLOAT
+static void _flit(Code* c);
+#endif
 static void _comment(Code* c);
 static void _str(Code* c);
 static void _lit(Code* c);
@@ -125,7 +132,8 @@ static inline void allot(size_t n)
   if (heap_ptr > heap.size()) heap.resize(heap_ptr + 1024);
 }
 
-static const Code rom[] = { CODE("bye", exit(0)),
+static const Code rom[] = {
+  CODE("bye", exit(0)),
   CODE("+",
     {
       DU b = ss_pop();
@@ -355,7 +363,7 @@ static const Code rom[] = { CODE("bye", exit(0)),
   CODE("pick",
     {
       DU n = ss_pop();
-      if (n < 0 || n >= (DU)current_ctx->ss.size()) throw std::runtime_error("pick out of range");
+      if (n < 0 || n >= (DU)current_ctx->ss.size()) throw std::runtime_error("Pick out of range");
       DU v = current_ctx->ss[current_ctx->ss.size() - 1 - n];
       ss_push(v);
     }),
@@ -412,10 +420,10 @@ static const Code rom[] = { CODE("bye", exit(0)),
       DU b = ss_pop();
       DU c = ss_pop();
       DU d = ss_pop();
-      ss_push(c);
-      ss_push(d);
-      ss_push(a);
       ss_push(b);
+      ss_push(a);
+      ss_push(d);
+      ss_push(c);
     }),
   CODE("2over",
     {
@@ -423,15 +431,17 @@ static const Code rom[] = { CODE("bye", exit(0)),
       DU b = ss_pop();
       DU c = ss_pop();
       DU d = ss_pop();
-      ss_push(c);
       ss_push(d);
-      ss_push(a);
+      ss_push(c);
       ss_push(b);
-      ss_push(c);
+      ss_push(a);
       ss_push(d);
+      ss_push(c);
     }),
-  CODE(">r", current_ctx->rs.push(ss_pop())), CODE("r>", ss_push(current_ctx->rs.pop())),
-  CODE("r@", ss_push(current_ctx->rs[-1])), CODE("base", ss_push(BASE)),
+  CODE(">r", current_ctx->rs.push(ss_pop())),
+  CODE("r>", ss_push(current_ctx->rs.pop())),
+  CODE("r@", ss_push(current_ctx->rs[-1])),
+  CODE("base", ss_push(BASE)),
   CODE("decimal",
     {
       BASE = 10;
@@ -442,7 +452,8 @@ static const Code rom[] = { CODE("bye", exit(0)),
       BASE = 16;
       forth_print([&](std::ostringstream& os) { os << std::setbase(BASE); });
     }),
-  CODE("bl", ss_push(0x20)), CODE("cr", { forth_print([&](std::ostringstream& os) { os << ENDL; }); }),
+  CODE("bl", ss_push(0x20)),
+  CODE("cr", { forth_print([&](std::ostringstream& os) { os << ENDL; }); }),
   CODE(".",
     {
       DU v = ss_pop();
@@ -697,7 +708,9 @@ static const Code rom[] = { CODE("bye", exit(0)),
       dict_pop();
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  CODE("exit", { unnest(); }), CODE("[", { compile = false; }), CODE("]", { compile = true; }),
+  CODE("exit", { unnest(); }),
+  CODE("[", { compile = false; }),
+  CODE("]", { compile = true; }),
   CODE(":",
     {
       SYS_MUTEX_LOCK(forth_mutex);
@@ -868,7 +881,9 @@ static const Code rom[] = { CODE("bye", exit(0)),
         throw std::runtime_error("Undefined word");
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  CODE("depth", ss_push(current_ctx->ss.size())), CODE("mstat", mem_stat()), CODE("ms", ss_push(MILLIS())),
+  CODE("depth", ss_push(current_ctx->ss.size())),
+  CODE("mstat", mem_stat()),
+  CODE("ms", ss_push(MILLIS())),
   CODE("rnd", ss_push(RND())),
   CODE("included",
     {
@@ -968,28 +983,370 @@ static const Code rom[] = { CODE("bye", exit(0)),
       }
 #endif
     }),
-  CODE("active?", {
-    DU id = ss_pop();
-    SYS_MUTEX_LOCK(forth_mutex);
-    if (id >= all_contexts.size()) {
-      SYS_MUTEX_UNLOCK(forth_mutex);
-      throw std::runtime_error("Invalid task id");
-    }
-    ForthContext* ctx = all_contexts[id];
-    SYS_MUTEX_UNLOCK(forth_mutex);
-    bool active = false;
-    if (ctx) {
-#if ESP_PLATFORM
-      if (ctx->handle != nullptr) {
-        eTaskState state = eTaskGetState((TaskHandle_t)ctx->handle);
-        active = (state != eDeleted && state != eInvalid && !ctx->finished);
+  CODE("active?",
+    {
+      DU id = ss_pop();
+      SYS_MUTEX_LOCK(forth_mutex);
+      if (id >= all_contexts.size()) {
+        SYS_MUTEX_UNLOCK(forth_mutex);
+        throw std::runtime_error("Invalid task id");
       }
+      ForthContext* ctx = all_contexts[id];
+      SYS_MUTEX_UNLOCK(forth_mutex);
+      bool active = false;
+      if (ctx) {
+#if ESP_PLATFORM
+        if (ctx->handle != nullptr) {
+          eTaskState state = eTaskGetState((TaskHandle_t)ctx->handle);
+          active = (state != eDeleted && state != eInvalid && !ctx->finished);
+        }
 #else
       active = (ctx->handle != nullptr && !ctx->finished);
 #endif
-    }
-    ss_push(BOOL(active));
-  }) };
+      }
+      ss_push(BOOL(active));
+    }),
+#if USE_FLOAT
+  CODE("f+",
+    {
+      DF b = fs_pop();
+      DF a = fs_pop();
+      fs_push(a + b);
+    }),
+  CODE("f-",
+    {
+      DF b = fs_pop();
+      DF a = fs_pop();
+      fs_push(a - b);
+    }),
+  CODE("f*",
+    {
+      DF b = fs_pop();
+      DF a = fs_pop();
+      fs_push(a * b);
+    }),
+  CODE("f/",
+    {
+      DF b = fs_pop();
+      DF a = fs_pop();
+      fs_push(a / b);
+    }),
+  CODE("f2*",
+    {
+      DF a = fs_pop();
+      fs_push(a * 2.0);
+    }),
+  CODE("f2/",
+    {
+      DF a = fs_pop();
+      fs_push(a * 0.5);
+    }),
+  CODE("1/f",
+    {
+      DF a = fs_pop();
+      fs_push(1.0 / a);
+    }),
+  CODE("fsqrt",
+    {
+      DF a = fs_pop();
+      fs_push(std::sqrt(a));
+    }),
+  CODE("f**",
+    {
+      DF b = fs_pop();
+      DF a = fs_pop();
+      fs_push(std::pow(a, b));
+    }),
+  CODE("fnegate",
+    {
+      DF a = fs_pop();
+      fs_push(-a);
+    }),
+  CODE("fabs",
+    {
+      DF a = fs_pop();
+      fs_push(std::fabs(a));
+    }),
+  CODE("fmin",
+    {
+      DF b = fs_pop();
+      DF a = fs_pop();
+      fs_push(std::fmin(a, b));
+    }),
+  CODE("fmax",
+    {
+      DF b = fs_pop();
+      DF a = fs_pop();
+      fs_push(std::fmax(a, b));
+    }),
+  CODE("fsin",
+    {
+      DF a = fs_pop();
+      fs_push(std::sin(a));
+    }),
+  CODE("fcos",
+    {
+      DF a = fs_pop();
+      fs_push(std::cos(a));
+    }),
+  CODE("ftan",
+    {
+      DF a = fs_pop();
+      fs_push(std::tan(a));
+    }),
+  CODE("fasin",
+    {
+      DF a = fs_pop();
+      fs_push(std::asin(a));
+    }),
+  CODE("facos",
+    {
+      DF a = fs_pop();
+      fs_push(std::acos(a));
+    }),
+  CODE("fatan",
+    {
+      DF a = fs_pop();
+      fs_push(std::atan(a));
+    }),
+  CODE("fatan2",
+    {
+      DF b = fs_pop();
+      DF a = fs_pop();
+      fs_push(std::atan2(a, b));
+    }),
+  CODE("fsinh",
+    {
+      DF a = fs_pop();
+      fs_push(std::sinh(a));
+    }),
+  CODE("fcosh",
+    {
+      DF a = fs_pop();
+      fs_push(std::cosh(a));
+    }),
+  CODE("ftanh",
+    {
+      DF a = fs_pop();
+      fs_push(std::tanh(a));
+    }),
+  CODE("fasinh",
+    {
+      DF a = fs_pop();
+      fs_push(std::asinh(a));
+    }),
+  CODE("facosh",
+    {
+      DF a = fs_pop();
+      fs_push(std::acosh(a));
+    }),
+  CODE("fatanh",
+    {
+      DF a = fs_pop();
+      fs_push(std::atanh(a));
+    }),
+  CODE("fexp",
+    {
+      DF a = fs_pop();
+      fs_push(std::exp(a));
+    }),
+  CODE("fln",
+    {
+      DF a = fs_pop();
+      fs_push(std::log(a));
+    }),
+  CODE("flog",
+    {
+      DF a = fs_pop();
+      fs_push(std::log10(a));
+    }),
+  CODE("falog",
+    {
+      DF a = fs_pop();
+      fs_push(std::pow(10.0, a));
+    }),
+  CODE("floor",
+    {
+      DF a = fs_pop();
+      fs_push(std::floor(a));
+    }),
+  CODE("fround",
+    {
+      DF a = fs_pop();
+      fs_push(std::round(a));
+    }),
+  CODE("f~abs",
+    {
+      DF eps = fs_pop();
+      DF b = fs_pop();
+      DF a = fs_pop();
+      ss_push(std::fabs(a - b) <= eps ? -1 : 0);
+    }),
+  CODE("f~rel",
+    {
+      DF eps = fs_pop();
+      DF b = fs_pop();
+      DF a = fs_pop();
+      DF scale = std::fmax(std::fabs(a), std::fabs(b));
+      if (scale == 0.0) scale = 1.0;
+      ss_push(std::fabs(a - b) / scale <= eps ? -1 : 0);
+    }),
+  CODE("s>f",
+    {
+      DU n = ss_pop();
+      fs_push((DF)n);
+    }),
+  CODE("d>f",
+    {
+      DU hi = ss_pop();
+      DU lo = ss_pop();
+#if ESP_PLATFORM
+      uint64_t val64 = (static_cast<uint64_t>(static_cast<uint32_t>(hi)) << 32) | static_cast<uint32_t>(lo);
+      fs_push(static_cast<DF>(val64));
+#else
+#if defined(__SIZEOF_INT128__)
+    unsigned __int128 val128 = (static_cast<unsigned __int128>(static_cast<uint64_t>(hi)) << 64)
+                             | static_cast<uint64_t>(lo);
+    fs_push(static_cast<DF>(static_cast<long double>(val128)));
+#else
+    long double val = std::ldexp(static_cast<long double>(static_cast<uint64_t>(hi)), 64);
+    val += static_cast<long double>(static_cast<uint64_t>(lo));
+    fs_push(static_cast<DF>(val));
+#endif
+#endif
+    }),
+  CODE("f>s",
+    {
+      DF a = fs_pop();
+      ss_push((DU)a);
+    }),
+  CODE("f>d",
+    {
+      DF a = fs_pop();
+      long double x = static_cast<long double>(a);
+      long double intpart;
+      std::modf(x, &intpart);
+
+      int64_t whole = static_cast<int64_t>(intpart);
+
+      uint32_t lo = static_cast<uint32_t>(whole & 0xFFFFFFFFULL);
+      uint32_t hi = static_cast<uint32_t>((whole >> 32) & 0xFFFFFFFFULL);
+
+      ss_push(static_cast<DU>(lo));
+      ss_push(static_cast<DU>(hi));
+    }),
+  CODE("pi", { fs_push(3.14159265358979323846); }),
+  CODE("fdup",
+    {
+      DF a = fs_pop();
+      fs_push(a);
+      fs_push(a);
+    }),
+  CODE("fdrop", { fs_pop(); }),
+  CODE("fswap",
+    {
+      DF a = fs_pop();
+      DF b = fs_pop();
+      fs_push(a);
+      fs_push(b);
+    }),
+  CODE("fover",
+    {
+      DF a = fs_pop();
+      DF b = fs_pop();
+      fs_push(b);
+      fs_push(a);
+      fs_push(b);
+    }),
+  CODE("frot",
+    {
+      DF a = fs_pop();
+      DF b = fs_pop();
+      DF c = fs_pop();
+      fs_push(b);
+      fs_push(a);
+      fs_push(c);
+    }),
+  CODE("fnip",
+    {
+      DF a = fs_pop();
+      fs_pop();
+      fs_push(a);
+    }),
+  CODE("ftuck",
+    {
+      DF a = fs_pop();
+      DF b = fs_pop();
+      fs_push(a);
+      fs_push(b);
+      fs_push(a);
+    }),
+  CODE("fpick",
+    {
+      DU n = ss_pop();
+      if (n < 0 || n >= (DU)current_ctx->fs.size()) throw std::runtime_error("Fpick out of range");
+      DF v = current_ctx->fs[current_ctx->fs.size() - 1 - n];
+      fs_push(v);
+    }),
+  CODE("f@",
+    {
+      DU addr = ss_pop();
+      DF val;
+      memcpy(&val, (void*)addr, sizeof(DF));
+      fs_push(val);
+    }),
+  CODE("f!",
+    {
+      DF val = fs_pop();
+      DU addr = ss_pop();
+      memcpy((void*)addr, &val, sizeof(DF));
+    }),
+  CODE("floats",
+    {
+      DU n = ss_pop();
+      ss_push(n * sizeof(DF));
+    }),
+  CODE("f.",
+    {
+      DF v = fs_pop();
+      forth_print([&](std::ostringstream& os) { os << std::setbase(10) << v << " "; });
+    }),
+  CODE("f.r",
+    {
+      DU width = ss_pop();
+      DU precision = ss_pop();
+      DF v = fs_pop();
+      forth_print([&](std::ostringstream& os) {
+        os << std::setbase(10) << std::fixed << std::setprecision((int)precision) << std::setw((int)width) << v;
+      });
+    }),
+  CODE("f.s",
+    {
+      forth_print([&](std::ostringstream& os) {
+        os << "<" << current_ctx->fs.size() << "> ";
+        for (DF v : current_ctx->fs)
+          os << v << ' ';
+      });
+    }),
+  CODE("fvariable",
+    {
+      SYS_MUTEX_LOCK(forth_mutex);
+      dict_push(new Code(read_word()));
+      DF val = 0.0;
+      DU addr = alloc_heap((const uint8_t*)&val, sizeof(DF));
+      last->append(new Var(addr));
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }),
+  CODE("fconstant",
+    {
+      SYS_MUTEX_LOCK(forth_mutex);
+      DF val = fs_pop();
+      dict_push(new Code(read_word()));
+      last->append(new FLit(val));
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }),
+#endif
+};
 
 void ss_push(DU n)
 {
@@ -1000,6 +1357,18 @@ DU ss_pop()
 {
   return current_ctx->ss.pop();
 }
+
+#if USE_FLOAT
+void fs_push(DF n)
+{
+  current_ctx->fs.push(n);
+}
+
+DF fs_pop()
+{
+  return current_ctx->fs.pop();
+}
+#endif
 
 void dict_add(const Code* words, size_t size)
 {
@@ -1410,6 +1779,14 @@ static void _lit(Code* c)
   ss_push(c->q[0]);
 }
 
+#if USE_FLOAT
+static void _flit(Code* c)
+{
+  FLit* fl = static_cast<FLit*>(c);
+  fs_push(fl->val);
+}
+#endif
+
 static void _var(Code* c)
 {
   ss_push(c->q[0]);
@@ -1674,6 +2051,28 @@ static Code* find(std::string s)
   return nullptr;
 }
 
+#if USE_FLOAT
+static bool parse_float(const std::string& s, DF& out)
+{
+  bool has_dot = s.find('.') != std::string::npos;
+  bool has_e = s.find('e') != std::string::npos || s.find('E') != std::string::npos;
+  if (!has_dot && !has_e) return false;
+
+  char* end;
+  DF v = strtod(s.c_str(), &end);
+
+  if (*end == '\0') {
+    out = v;
+    return true;
+  }
+  if ((*end == 'e' || *end == 'E') && *(end + 1) == '\0') {
+    out = v;
+    return true;
+  }
+  return false;
+}
+#endif
+
 static DU parse_number(std::string idiom)
 {
   const char* cs = idiom.c_str();
@@ -1744,6 +2143,20 @@ static void forth_core(std::string idiom)
     return;
   }
 
+#if USE_FLOAT
+  DF fval;
+  if (parse_float(idiom, fval)) {
+    if (compile) {
+      SYS_MUTEX_LOCK(forth_mutex);
+      last->append(new FLit(fval));
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }
+    else {
+      fs_push(fval);
+    }
+    return;
+  }
+#endif
   DU n = parse_number(idiom);
   if (compile) {
     SYS_MUTEX_LOCK(forth_mutex);
@@ -1844,6 +2257,14 @@ Lit::Lit(DU d)
 {
   q.push(d);
 }
+
+#if USE_FLOAT
+FLit::FLit(DF v)
+  : Code(_flit),
+    val(v)
+{
+}
+#endif
 
 Var::Var(DU d)
   : Code(_var)

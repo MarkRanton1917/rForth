@@ -1,34 +1,55 @@
 cmake_minimum_required(VERSION 3.16)
 
-execute_process(
-  COMMAND git describe --tags --abbrev=7
-  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-  OUTPUT_VARIABLE GIT_VERSION
-  OUTPUT_STRIP_TRAILING_WHITESPACE
-  ERROR_QUIET
-)
+function(generate_version_header)
+  set(version_h ${CMAKE_SOURCE_DIR}/main/version.h)
+  set(version_script ${CMAKE_SOURCE_DIR}/generate-version.sh)
 
-if(NOT GIT_VERSION)
   execute_process(
-    COMMAND git rev-parse --short HEAD
+    COMMAND ${version_script} ${version_h}.tmp
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    OUTPUT_VARIABLE GIT_VERSION
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
+    RESULT_VARIABLE ret
+    ERROR_VARIABLE err
   )
-endif()
+  if(NOT ret EQUAL 0)
+    message(FATAL_ERROR "Failed to generate version header: ${err}")
+  endif()
+
+  if(EXISTS ${version_h})
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E compare_files ${version_h}.tmp ${version_h}
+      RESULT_VARIABLE compare_result
+    )
+    if(compare_result EQUAL 0)
+      file(REMOVE ${version_h}.tmp)
+      message(STATUS "version.h unchanged")
+    else()
+      file(RENAME ${version_h}.tmp ${version_h})
+      message(STATUS "version.h updated")
+    endif()
+  else()
+    file(RENAME ${version_h}.tmp ${version_h})
+    message(STATUS "version.h created at ${version_h}")
+  endif()
+
+  if(NOT EXISTS ${version_h})
+    message(FATAL_ERROR "version.h was not created!")
+  endif()
+endfunction()
 
 if(DEFINED ESP_PLATFORM)
 
   include($ENV{IDF_PATH}/tools/cmake/project.cmake)
   add_compile_definitions(
-    CC_DEBUG=1
-    CASE_SENSITIVE=1
-    PAD_SIZE=64
-    HEAP_SIZE=65536
-    GIT_VERSION="${GIT_VERSION}"
+      CC_DEBUG=1
+      CASE_SENSITIVE=1
+      PAD_SIZE=64
+      HEAP_SIZE=65536
   )
   project(rForth)
+
+  generate_version_header()
+
+  include_directories(${CMAKE_SOURCE_DIR}/main)
 
   set(LITTLEFS_IMAGE_SIZE  "0x200000" CACHE STRING "Image size")
   set(LITTLEFS_BLOCK_SIZE  "4096"     CACHE STRING "Block size")
@@ -57,7 +78,7 @@ if(DEFINED ESP_PLATFORM)
   add_custom_target(make_image ALL DEPENDS ${OUTPUT_IMAGE})
 
   set(ESPTOOL_PORT "/dev/ttyACM0" CACHE STRING "Serial port")
-  set(ESPTOOL_BAUD "460800" CACHE STRING "Serial baudrate")
+  set(ESPTOOL_BAUD "921600" CACHE STRING "Serial baudrate")
   set(ESPTOOL_CHIP "esp32c3" CACHE STRING "Chip model")
 
   add_custom_target(flash_all
@@ -84,9 +105,9 @@ if(DEFINED ESP_PLATFORM)
       ${CMAKE_BINARY_DIR}/ota_data_initial.bin
     VERBATIM
   )
-else()
 
-  project(rForth LANGUAGES C CXX)
+else()
+  project(rForth)
   set(CMAKE_CXX_STANDARD 20)
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -107,11 +128,12 @@ else()
     CASE_SENSITIVE=1
     PAD_SIZE=64
     HEAP_SIZE=65536
-    GIT_VERSION="${GIT_VERSION}"
     LINUX_PLATFORM=1
   )
 
   target_link_libraries(rForth PRIVATE pthread)
+
+  generate_version_header()
 
   add_custom_target(run
     COMMAND ./rForth
@@ -119,5 +141,4 @@ else()
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     COMMENT "Running rForth on Linux"
   )
-
 endif()

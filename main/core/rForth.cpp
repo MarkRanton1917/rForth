@@ -3,7 +3,6 @@
 #include <sstream>
 #include <cstring>
 #include <iomanip>
-#include <vector>
 #include <string>
 #include <cstdlib>
 #include <algorithm>
@@ -89,7 +88,7 @@ static void forth_core(std::string idiom);
 static void forth_task_entry(void* pvParameters);
 
 static FV<Code*> dict;
-static std::vector<uint8_t> heap;
+static FV<uint8_t> heap;
 static size_t heap_ptr = 0;
 static bool compile = false;
 static Code* last;
@@ -99,7 +98,7 @@ static std::ostringstream fout;
 static void (*fout_cb)(int, const char*);
 
 static THREAD_LOCAL ForthContext* current_ctx = nullptr;
-static std::vector<ForthContext*> all_contexts;
+static FV<ForthContext*> all_contexts;
 static SYS_MUTEX_TYPE forth_mutex = nullptr;
 static std::atomic<bool> abort_requested { false };
 static std::string abort_message;
@@ -1319,7 +1318,7 @@ static void unnest()
     ctx->rs.pop_back();
   ctx->ip = (size_t)ctx->rs.back();
   ctx->rs.pop_back();
-  ctx->pf = (const std::vector<Code*>*)ctx->rs.back();
+  ctx->pf = (const FV<Code*>*)ctx->rs.back();
   ctx->rs.pop_back();
   ctx->rs.pop_back();
   if (!ctx->call_stack.empty()) ctx->call_stack.pop_back();
@@ -1328,7 +1327,7 @@ static void unnest()
 void Code::exec()
 {
   struct Frame {
-    const std::vector<Code*>* pf;
+    const FV<Code*>* pf;
     size_t ip;
     Code* word;
   };
@@ -1349,7 +1348,7 @@ void Code::exec()
     return;
   }
 
-  std::vector<Frame> exec_stack;
+  FV<Frame> exec_stack;
 
   ctx->rs.push_back(MARKER_FRAME);
   ctx->rs.push_back((DU)ctx->pf);
@@ -1764,6 +1763,12 @@ T FV<T>::pop()
 
 template<typename T>
 T& FV<T>::operator[](int i)
+{
+  return std::vector<T>::operator[](i < 0 ? (this->size() + i) : i);
+}
+
+template<typename T>
+const T& FV<T>::operator[](int i) const
 {
   return std::vector<T>::operator[](i < 0 ? (this->size() + i) : i);
 }

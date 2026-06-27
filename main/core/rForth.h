@@ -47,6 +47,7 @@ struct FV : public std::vector<T> {
   void push(T n);
   T pop();
   T& operator[](int i);
+  const T& operator[](int i) const;
 };
 
 struct Code;
@@ -103,7 +104,7 @@ struct Bran : Code {
 struct ForthContext {
   FV<DU> ss;
   FV<DU> rs;
-  const std::vector<Code*>* pf;
+  const FV<Code*>* pf;
   size_t ip;
   FV<Code*> call_stack;
   Code* xt;

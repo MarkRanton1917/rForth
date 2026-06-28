@@ -1,5 +1,18 @@
 cmake_minimum_required(VERSION 3.16)
 
+set(CC_DEBUG 1 CACHE STRING "Debug level")
+set(CASE_SENSITIVE 1 CACHE STRING "Case sensitivity")
+set(PAD_SIZE 256 CACHE STRING "PAD size in bytes")
+set(HEAP_SIZE 65536 CACHE STRING "Heap size in bytes")
+set(USE_FLOAT 1 CACHE STRING "Enable floating-point operations")
+
+set(HARDWARE "ESP32-USART" CACHE STRING "Hardware target platform")
+set(HARDWARE_STRINGS "PC" "ESP32-USART")
+set_property(CACHE HARDWARE PROPERTY STRINGS ${HARDWARE_STRINGS})
+if(NOT HARDWARE IN_LIST HARDWARE_STRINGS)
+  message(FATAL_ERROR "Invalid HARDWARE target '${HARDWARE}'")
+endif()
+
 function(generate_version_header)
   set(version_h ${CMAKE_SOURCE_DIR}/main/version.h)
   set(version_script ${CMAKE_SOURCE_DIR}/generate-version.sh)
@@ -36,15 +49,49 @@ function(generate_version_header)
   endif()
 endfunction()
 
-if(DEFINED ESP_PLATFORM)
+if(HARDWARE STREQUAL "LINUX")
+  project(rForth)
+  set(CMAKE_CXX_STANDARD 20)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+  add_executable(rForth
+    main/platform/linux.cpp
+    main/core/rForth.cpp
+  )
+
+  target_include_directories(rForth PRIVATE
+    main
+    main/core
+    main/platform
+  )
+
+  add_compile_definitions(
+    CC_DEBUG=${CC_DEBUG}
+    CASE_SENSITIVE=${CASE_SENSITIVE}
+    PAD_SIZE=${PAD_SIZE}
+    HEAP_SIZE=${HEAP_SIZE}
+    USE_FLOAT=${USE_FLOAT}
+    LINUX_PLATFORM=1
+  )
+
+  target_link_libraries(rForth PRIVATE pthread)
+
+  generate_version_header()
+
+  add_custom_target(run
+    COMMAND ./rForth
+    DEPENDS rForth
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    COMMENT "Running rForth on PC"
+  )
+else()
   include($ENV{IDF_PATH}/tools/cmake/project.cmake)
   add_compile_definitions(
-      CC_DEBUG=1
-      CASE_SENSITIVE=1
-      PAD_SIZE=64
-      HEAP_SIZE=65536
-      USE_FLOAT=1
+      CC_DEBUG=${CC_DEBUG}
+      CASE_SENSITIVE=${CASE_SENSITIVE}
+      PAD_SIZE=${PAD_SIZE}
+      HEAP_SIZE=${HEAP_SIZE}
+      USE_FLOAT=${USE_FLOAT}
   )
   project(rForth)
 
@@ -105,41 +152,5 @@ if(DEFINED ESP_PLATFORM)
       ${CMAKE_BINARY_DIR}/partition_table/partition-table.bin
       ${CMAKE_BINARY_DIR}/ota_data_initial.bin
     VERBATIM
-  )
-
-else()
-  project(rForth)
-  set(CMAKE_CXX_STANDARD 20)
-  set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-  add_executable(rForth
-    main/platform/linux.cpp
-    main/core/rForth.cpp
-  )
-
-  target_include_directories(rForth PRIVATE
-    main
-    main/core
-    main/platform
-  )
-
-  target_compile_definitions(rForth PRIVATE
-    CC_DEBUG=1
-    CASE_SENSITIVE=1
-    PAD_SIZE=64
-    HEAP_SIZE=65536
-    USE_FLOAT=1
-    LINUX_PLATFORM=1
-  )
-
-  target_link_libraries(rForth PRIVATE pthread)
-
-  generate_version_header()
-
-  add_custom_target(run
-    COMMAND ./rForth
-    DEPENDS rForth
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-    COMMENT "Running rForth on Linux"
   )
 endif()

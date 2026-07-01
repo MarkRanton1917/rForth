@@ -1492,20 +1492,8 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
     }
   };
 
-#if ESP_PLATFORM
-  if (!hook) {
-    fout_cb = [](int len, const char* s) {
-      (void)len;
-      printf("%s", s);
-    };
-  }
-  else {
-    fout_cb = hook;
-  }
-#else
-  auto cb = [](int, const char* rst) { std::cout << rst; };
+  auto cb = [](int, const char*) {};
   fout_cb = hook ? hook : cb;
-#endif
 
   std::istringstream istm(cmd);
   std::string line;

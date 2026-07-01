@@ -1,3 +1,7 @@
+\ Copyright (c) 2026 Vladimir Egorov 
+\ This library is licensed under the MIT License.
+\ See the LICENSE file in the root of the repository for the full license text.
+
 : task1_abort 4 0 do ." t2: " i dup . cr 3 = if abort" Task1 aborted" then 150 delay loop ." t2 done" cr ;
 : task2 5 0 do ." t1: " i . cr 100 delay loop ." t1 done" cr ;
 variable tid1

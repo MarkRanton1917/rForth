@@ -1,5 +1,8 @@
+// Copyright (c) 2026 Vladimir Egorov
+// This library is licensed under the MIT License.
+// See the LICENSE file in the root of the repository for the full license text.
+
 #include "rForth.h"
-#include "version.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -12,16 +15,15 @@
 
 void mem_stat()
 {
-  const char* version = GIT_VERSION;
   struct sysinfo info;
   if (sysinfo(&info) == 0) {
     unsigned long total = info.totalram;
     unsigned long free_ram = info.freeram;
     double percent = (double)free_ram / total * 100.0;
-    printf("rForth [%s] on Linux, RAM %.2f%% free (%lu/%lu KB)\n", version, percent, free_ram / 1024, total / 1024);
+    printf("rForth on Linux, RAM %.2f%% free (%lu/%lu KB)\n", percent, free_ram / 1024, total / 1024);
   }
   else {
-    printf("rForth [%s] on Linux (memory info unavailable)\n", version);
+    printf("rForth on Linux (memory info unavailable)\n");
   }
 }
 

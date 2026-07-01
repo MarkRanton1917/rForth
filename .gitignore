@@ -1,6 +1,2 @@
 .vscode
-build
-dependencies.lock
-managed_components
-sdkconfig.old
-main/version.h
+

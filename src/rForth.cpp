@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Vladimir Egorov
+// This library is licensed under the MIT License.
+// See the LICENSE file in the root of the repository for the full license text.
+
 #include "rForth.h"
 
 #include <sstream>
@@ -1999,13 +2003,6 @@ static void words()
   int x = 0;
   std::string output;
   for (Code* w : dict) {
-#if CC_DEBUG > 1
-    forth_print([&](std::ostringstream& os) {
-      os << std::setw(4) << w->token << "> " << (UFP)w << ' ' << std::setw(8) << (U32)(UFP)w->xt
-         << (strcmp(w->name, ".\"") == 0 || strcmp(w->name, "s\"") == 0 ? '"' : ':') << (w->immd ? '*' : ' ') << w->name
-         << "  " << ENDL;
-    });
-#else
     std::string name = w->name ? w->name : "";
     output += "  " + name;
     x += (name.length() + 2);
@@ -2014,7 +2011,6 @@ static void words()
       output.clear();
       x = 0;
     }
-#endif
   }
   if (!output.empty()) {
     forth_print([&](std::ostringstream& os) { os << output << ENDL; });

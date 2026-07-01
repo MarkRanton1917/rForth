@@ -1,0 +1,484 @@
+# rForth - Forth Interpreter for ESP32 and Linux
+
+A lightweight, efficient **Forth interpreter** implementation designed for embedded systems, particularly optimized for **ESP32 microcontrollers** with full support for multitasking, floating-point arithmetic, and memory management.
+
+> **Note:** rForth is a fork of [eForth v4.2](https://github.com/chochain/eForth), adapted and enhanced for modern embedded systems with cross-platform support.
+
+## Features
+
+### Core Forth Implementation
+- **Stack-based execution model** - Traditional Forth word and number stack operations
+- **Interactive interpreter** - Read-Eval-Print Loop (REPL) for real-time code execution
+- **Word definitions** - Define custom words with `:` (colon) definitions
+- **Control structures** - `if/then`, `begin/until`, `begin/while/repeat`, `do/loop`, `do/+loop`
+- **Memory management** - Configurable heap size with dynamic memory allocation
+- **Case-sensitive or case-insensitive mode** - Compile-time configurable
+
+### Advanced Features
+- **Floating-point support** - Optional float type (DF) for mathematical operations
+- **Cooperative multitasking** - Full support on FreeRTOS (ESP32) and pthreads (Linux)
+- **Embedded scripting** - Easy integration as a component in larger projects
+- **Cross-platform** - Runs on both ESP32 (with FreeRTOS) and Linux; porting to other platforms is straightforward through platform-specific implementations of `mem_stat()` and `forth_include()` functions with FreeRTOS abstraction layer support
+- **gForth-compatible output format** - Output formatting and stack display follow gForth conventions for consistency with standard Forth systems
+
+## Project Structure
+
+```
+rforth/
+├── src/
+│   ├── rForth.h          # Main header with core structures and macros
+│   └── rForth.cpp        # Implementation of Forth interpreter
+├── forth/
+│   ├── memory.fs         # Forth utility library for memory operations
+│   └── task_test.fs      # Example task management in Forth
+├── examples/
+│   ├── esp32-usart.cpp   # ESP32 UART interface example
+│   └── linux.cpp         # Linux standalone example
+├── CMakeLists.txt        # Build configuration for IDF component
+├── LICENCE               # MIT License
+└── README.md             # This file
+```
+
+## Building
+
+### As an ESP-IDF Component
+
+The project is designed as an ESP-IDF component. Include it in your project's `components/` directory and reference it in your `CMakeLists.txt`:
+
+```cmake
+idf_component_register(
+  REQUIRES rforth
+)
+```
+
+### Build Options (in `CMakeLists.txt`)
+
+Configure the Forth interpreter with compile-time definitions:
+
+```cmake
+add_compile_definitions(
+  CASE_SENSITIVE=1        # 1=case-sensitive, 0=case-insensitive
+  PAD_SIZE=256            # Input buffer size
+  HEAP_SIZE=65536         # Heap size in bytes
+  USE_FLOAT=1             # 1=enable floating-point, 0=disable
+)
+```
+
+### Linux Build
+
+For Linux development and testing, compile with Linux platform definitions:
+
+```bash
+g++ -DLINUX_PLATFORM -DUSE_FLOAT=1 src/rForth.cpp examples/linux.cpp -o rforth -lm
+```
+
+## Core Data Types
+
+```cpp
+typedef uint32_t U32;    // Unsigned 32-bit integer
+typedef int32_t S32;     // Signed 32-bit integer
+typedef int32_t DU;      // Data unit (stack word) - 32-bit on ESP32
+typedef int64_t DU2;     // 64-bit double word
+typedef float DF;        // Floating-point number (when USE_FLOAT=1)
+typedef uintptr_t UFP;   // Function pointer type
+```
+
+## Usage Example
+
+### Interactive Session
+
+```forth
+\ Define a simple word
+: square ( n -- n² ) dup * ;
+
+\ Test it
+5 square .              \ Output: 25
+
+\ Memory operations
+100 5 dump              \ Dump 5 cells from address 100
+
+\ Task creation (with threading support)
+variable tid
+: worker ." Starting task" cr ;
+' worker task tid !
+
+\ Check if task is active
+tid @ active? if ." Task is running" cr then
+
+\ Pause to yield control to other tasks
+pause
+```
+
+## Complete Word Reference
+
+All built-in words available in rForth, organized by category:
+
+### Arithmetic Operations
+- `+ ( n1 n2 -- n )` - Add two numbers
+- `- ( n1 n2 -- n )` - Subtract: n1 - n2
+- `* ( n1 n2 -- n )` - Multiply two numbers
+- `/ ( n1 n2 -- n )` - Divide: n1 / n2
+- `mod ( n1 n2 -- n )` - Modulo: n1 mod n2
+- `*/ ( n1 n2 n3 -- n )` - Multiply and divide: (n1 * n2) / n3
+- `/mod ( n1 n2 -- rem quot )` - Both remainder and quotient
+- `*/mod ( n1 n2 n3 -- rem quot )` - (n1 * n2) mod n3, then quot
+
+### Bitwise Operations
+- `and ( u1 u2 -- u )` - Bitwise AND
+- `or ( u1 u2 -- u )` - Bitwise OR
+- `xor ( u1 u2 -- u )` - Bitwise XOR
+- `invert ( u -- u )` - Bitwise NOT (invert all bits)
+- `lshift ( u n -- u )` - Left shift by n bits
+- `rshift ( u n -- u )` - Right shift by n bits
+
+### Unary Operations
+- `abs ( n -- |n| )` - Absolute value
+- `negate ( n -- -n )` - Negate (multiply by -1)
+- `1+ ( n -- n+1 )` - Add 1
+- `1- ( n -- n-1 )` - Subtract 1
+- `2* ( n -- n*2 )` - Multiply by 2
+- `2/ ( n -- n/2 )` - Divide by 2
+- `max ( n1 n2 -- max )` - Maximum of two numbers
+- `min ( n1 n2 -- min )` - Minimum of two numbers
+
+### Comparison Operations
+- `= ( n1 n2 -- flag )` - Equal (returns -1 for true, 0 for false)
+- `<> ( n1 n2 -- flag )` - Not equal
+- `< ( n1 n2 -- flag )` - Less than: n1 < n2
+- `> ( n1 n2 -- flag )` - Greater than: n1 > n2
+- `<= ( n1 n2 -- flag )` - Less than or equal
+- `>= ( n1 n2 -- flag )` - Greater than or equal
+- `u< ( u1 u2 -- flag )` - Unsigned less than
+- `u> ( u1 u2 -- flag )` - Unsigned greater than
+- `0= ( n -- flag )` - Zero equal (n == 0)
+- `0< ( n -- flag )` - Zero less (n < 0)
+- `0> ( n -- flag )` - Zero greater (n > 0)
+
+### Stack Manipulation
+- `dup ( x -- x x )` - Duplicate top of stack
+- `drop ( x -- )` - Remove top of stack
+- `swap ( x1 x2 -- x2 x1 )` - Swap two top items
+- `over ( x1 x2 -- x1 x2 x1 )` - Copy second item over top
+- `rot ( x1 x2 x3 -- x2 x3 x1 )` - Rotate top three
+- `-rot ( x1 x2 x3 -- x3 x1 x2 )` - Rotate back top three
+- `nip ( x1 x2 -- x2 )` - Remove second item
+- `tuck ( x1 x2 -- x2 x1 x2 )` - Insert top below second
+- `?dup ( x -- x | x x )` - Duplicate if not zero
+- `pick ( ... u -- ... x )` - Copy u-th item to top
+- `2dup ( x1 x2 -- x1 x2 x1 x2 )` - Duplicate top two
+- `2drop ( x1 x2 -- )` - Remove top two
+- `2swap ( x1 x2 x3 x4 -- x3 x4 x1 x2 )` - Swap two pairs
+- `2over ( x1 x2 x3 x4 -- x1 x2 x3 x4 x1 x2 )` - Copy first pair over second
+- `depth ( -- n )` - Get stack depth
+
+### Return Stack Operations
+- `>r ( x -- )` (return stack: -- x) - Move to return stack
+- `r> ( -- x )` (return stack: x -- ) - Pop from return stack
+- `r@ ( -- x )` (return stack: x -- x) - Copy from return stack (peek)
+
+### Input/Output
+- `emit ( c -- )` - Output a character (ASCII code)
+- `key ( -- c )` - Read a character
+- `cr ( -- )` - Output carriage return and line feed
+- `space ( -- )` - Output one space
+- `spaces ( n -- )` - Output n spaces
+- `type ( addr len -- )` - Output string from address with length
+- `. ( n -- )` - Print number in current base
+- `.r ( n width -- )` - Print number right-aligned in width
+- `u.r ( u width -- )` - Print unsigned number right-aligned
+- `.s ( -- )` - Print stack contents
+- `?  ( addr -- )` - Print cell at address
+- `bl ( -- 0x20 )` - Return space character code
+
+### String and Comment Operations (compile-time)
+- `( ... ) ` - Multi-line comment (immediate)
+- `\ ... ` - Single-line comment to end of line (immediate)
+- `.( string ) ` - Print string immediately (immediate)
+- `." string " ` - Print string at compile/execution time (immediate)
+- `s" string " ( -- addr len )` - Create string literal, returns address and length (immediate)
+- `abort" string " ` - Abort with message string (immediate)
+
+### Number Output Formatting
+- `<# ( -- )` - Begin number formatting
+- `# ( n -- n/base )` - Format one digit
+- `#s ( n -- 0 )` - Format remaining digits
+- `#> ( n -- addr len )` - End formatting, return address and length
+- `hold ( c -- )` - Add character to formatted number
+
+### Memory and Variables
+- `@ ( addr -- val )` - Fetch cell from address
+- `! ( val addr -- )` - Store cell to address
+- `c@ ( addr -- byte )` - Fetch byte (8-bit) from address
+- `c! ( byte addr -- )` - Store byte (8-bit) to address
+- `+! ( val addr -- )` - Add to value at address
+- `, ( n -- )` - Allocate and store cell in heap
+- `cells ( n -- bytes )` - Convert cell count to byte count
+- `allot ( n -- )` - Allocate n bytes in heap
+- `here ( -- addr )` - Get current heap pointer
+- `variable ( "name" -- )` - Create a variable (allocates one cell)
+- `constant ( n "name" -- )` - Create a constant
+- `fvariable ( "name" -- )` - Create floating-point variable (when USE_FLOAT=1)
+- `fconstant ( f "name" -- )` - Create floating-point constant (when USE_FLOAT=1)
+
+### Word Definition and Lookup
+- `: name ... ;` - Define a new word (compile mode)
+- `[ ( -- )` - Switch to interpretation mode
+- `] ( -- )` - Switch to compilation mode
+- `immediate ( -- )` - Make last word immediate
+- `execute ( xt -- )` - Execute word at execution token
+- `' name ( -- xt )` - Get execution token of word
+- `['] name ( -- xt )` - Get execution token at compile time
+- `create ( "name" -- )` - Create a named data structure
+- `does> ( -- )` - Define behavior of created words
+- `see ( "name" -- )` - Disassemble and display word definition
+- `words ( -- )` - List all defined words
+- `forget ( "name" -- )` - Delete word and all words after it
+- `boot ( -- )` - Reset to initial state (delete user words)
+
+### Base and Number Parsing
+- `base ( -- addr )` - Address of current base variable
+- `decimal ( -- )` - Set base to 10
+- `hex ( -- )` - Set base to 16
+
+### Control Structures (compile-only)
+- `if ... then` - Conditional execution
+- `if ... else ... then` - Conditional with alternative
+- `begin ... until` - Loop until condition true
+- `begin ... while ... repeat` - While loop
+- `begin ... again` - Infinite loop
+- `do ... loop` - Fixed count loop (i = index)
+- `do ... +loop` - Fixed count loop with variable step
+- `i ( -- n )` - Get current loop index
+- `leave ( -- )` - Exit loop immediately
+- `exit ( -- )` - Exit from current word
+
+### Timing and System
+- `ms ( -- ms )` - Get milliseconds since boot
+- `delay ( ms -- )` - Sleep for milliseconds
+- `pause ( -- )` - Yield control to scheduler
+- `rnd ( -- n )` - Get random number
+- `mstat ( -- )` - Print memory statistics
+- `bye ( -- )` - Exit Forth system
+
+### Task Management
+- `task ( xt -- id )` - Create new task from execution token
+- `active? ( id -- flag )` - Check if task is active
+- `resume ( id -- )` - Resume suspended task
+- `stop ( -- )` - Stop current task
+
+### Floating-Point Operations (when USE_FLOAT=1)
+
+#### Arithmetic
+- `f+ ( f1 f2 -- f )` - Float addition
+- `f- ( f1 f2 -- f )` - Float subtraction
+- `f* ( f1 f2 -- f )` - Float multiplication
+- `f/ ( f1 f2 -- f )` - Float division
+- `f** ( f1 f2 -- f )` - Float exponentiation (power)
+- `f2* ( f -- f )` - Multiply by 2.0
+- `f2/ ( f -- f )` - Divide by 2.0
+- `1/f ( f -- f )` - Reciprocal (1/f)
+
+#### Unary Functions
+- `fsqrt ( f -- f )` - Square root
+- `fnegate ( f -- f )` - Negate float
+- `fabs ( f -- f )` - Absolute value
+
+#### Comparison
+- `fmin ( f1 f2 -- f )` - Minimum of two floats
+- `fmax ( f1 f2 -- f )` - Maximum of two floats
+- `f~abs ( f1 f2 eps -- flag )` - Float equality with absolute tolerance
+- `f~rel ( f1 f2 eps -- flag )` - Float equality with relative tolerance
+
+#### Trigonometric
+- `fsin ( f -- f )` - Sine (radians)
+- `fcos ( f -- f )` - Cosine (radians)
+- `ftan ( f -- f )` - Tangent (radians)
+- `fasin ( f -- f )` - Arcsine
+- `facos ( f -- f )` - Arccosine
+- `fatan ( f -- f )` - Arctangent
+- `fatan2 ( f1 f2 -- f )` - Two-argument arctangent
+
+#### Hyperbolic
+- `fsinh ( f -- f )` - Hyperbolic sine
+- `fcosh ( f -- f )` - Hyperbolic cosine
+- `ftanh ( f -- f )` - Hyperbolic tangent
+- `fasinh ( f -- f )` - Inverse hyperbolic sine
+- `facosh ( f -- f )` - Inverse hyperbolic cosine
+- `fatanh ( f -- f )` - Inverse hyperbolic tangent
+
+#### Exponential and Logarithmic
+- `fexp ( f -- f )` - Exponential (e^f)
+- `fln ( f -- f )` - Natural logarithm
+- `flog ( f -- f )` - Base-10 logarithm
+- `falog ( f -- f )` - 10^f (antilog base 10)
+- `pi ( -- f )` - Push π (3.14159...)
+
+#### Rounding
+- `floor ( f -- f )` - Round down to integer
+- `fround ( f -- f )` - Round to nearest integer
+
+#### Float Stack Manipulation
+- `fdup ( f -- f f )` - Duplicate top of float stack
+- `fdrop ( f -- )` - Remove top of float stack
+- `fswap ( f1 f2 -- f2 f1 )` - Swap two floats
+- `fover ( f1 f2 -- f1 f2 f1 )` - Copy second over top
+- `frot ( f1 f2 f3 -- f2 f3 f1 )` - Rotate top three
+- `fnip ( f1 f2 -- f2 )` - Remove second float
+- `ftuck ( f1 f2 -- f2 f1 f2 )` - Insert top below second
+- `fpick ( ... u -- ... f )` - Copy u-th float to top
+
+#### Float Memory Access
+- `f@ ( addr -- f )` - Fetch float from address
+- `f! ( f addr -- )` - Store float to address
+- `floats ( n -- bytes )` - Convert float count to bytes
+
+#### Float Type Conversion
+- `s>f ( n -- f )` - Convert signed integer to float
+- `f>s ( f -- n )` - Convert float to signed integer
+- `d>f ( d_hi d_lo -- f )` - Convert double to float
+- `f>d ( f -- d_hi d_lo )` - Convert float to double
+
+#### Float Output
+- `f. ( f -- )` - Print float
+- `f.r ( f prec width -- )` - Print float with precision and width
+- `f.s ( -- )` - Print float stack contents
+
+### File Operations
+- `included ( addr len -- )` - Load and execute Forth file
+
+## Standard Library (Forth)
+
+### Memory Utilities (forth/memory.fs)
+
+- `dump ( n-cells addr -- )` - Dump n cells starting from address
+- `cdump ( n-bytes addr -- )` - Dump n bytes starting from address
+- `memset ( val n-cells addr -- )` - Fill n cells with value
+- `cmemset ( val n-bytes addr -- )` - Fill n bytes with value
+
+## Macros for Defining Words
+
+```cpp
+// Define a normal word
+CODE("WORD_NAME", { 
+  // implementation 
+})
+
+// Define an immediate word (executes during compilation)
+IMMD("IMMD_NAME", { 
+  // implementation 
+})
+
+// Define a compile-only word
+COMP("COMP_NAME", { 
+  // implementation 
+})
+```
+
+## Architecture
+
+### Stack-Based Computation
+
+rForth uses the traditional Forth stack model:
+- **Data Stack**: Operands and results
+- **Return Stack**: Function return addresses and loop parameters
+- **Dictionary**: Compiled word definitions
+
+### Execution Model
+
+1. **Parsing** - Input is read word-by-word
+2. **Lookup** - Each word is searched in the dictionary
+3. **Execution** - Found words execute immediately or compile depending on state
+4. **Compilation** - Colon definitions build new words from existing ones
+
+### Memory Layout
+
+- **Heap** - Dynamic allocations for word definitions
+- **PAD** - Input buffer for interactive commands
+- **Stacks** - Return and data stacks in task-local storage
+
+## Multitasking Support
+
+rForth provides built-in words for task management:
+
+- **`task ( xt -- id )`** - Create a new task from execution token (xt), returns task ID
+- **`active? ( id -- flag )`** - Check if task with given ID is active (true/-1 or false/0)
+- **`pause ( -- )`** - Yield control to other tasks
+- **`kill ( id -- )`** - Terminate a task
+
+### Multitasking Example
+
+```forth
+variable tid1
+variable tid2
+
+: task1 10 0 do ." Task 1: " i . cr 100 delay loop ;
+: task2 10 0 do ." Task 2: " i . cr 150 delay loop ;
+
+: main
+  ' task1 task tid1 !
+  ' task2 task tid2 !
+  begin
+    pause
+    tid1 @ active? 0= tid2 @ active? 0= and
+  until
+  ." All tasks completed" cr
+;
+
+main
+```
+
+## Platform Abstraction
+
+The code uses conditional compilation to support multiple platforms:
+
+```cpp
+#if ESP_PLATFORM
+  // ESP32-specific code (FreeRTOS)
+#elif LINUX_PLATFORM
+  // Linux-specific code (pthreads)
+#endif
+```
+
+## Example Programs
+
+### esp32-usart.cpp
+
+Provides UART interface for interactive Forth console on ESP32.
+
+### linux.cpp
+
+Standalone Forth interpreter for Linux systems.
+
+### forth/task_test.fs
+
+Demonstrates task creation and management in Forth.
+
+## System Integration
+
+### ESP32-specific Functions
+
+- **Task management**: `xTaskCreate`, `vTaskDelete`, task suspend/resume
+- **Timing**: `esp_timer_get_time()` for millisecond precision
+- **Synchronization**: FreeRTOS recursive mutexes and semaphores
+
+### Linux-specific Functions
+
+- **Threading**: `std::thread` for task management
+- **Synchronization**: `std::recursive_mutex`
+- **Timing**: `std::chrono` for time operations
+
+## License
+
+This project is licensed under the **MIT License**. See the [LICENCE](LICENCE) file for details.
+
+## Author
+
+Vladimir Egorov (2026)
+
+## Contributing
+
+Contributions are welcome! Please ensure code follows the existing style and includes appropriate documentation.
+
+---
+
+**rForth** brings the elegant simplicity and power of the Forth programming language to resource-constrained embedded systems while maintaining full compatibility with modern multitasking environments.

@@ -69,7 +69,7 @@ add_compile_definitions(
 For Linux development and testing, compile with Linux platform definitions:
 
 ```bash
-g++ -DLINUX_PLATFORM -DUSE_FLOAT=1 src/rForth.cpp examples/linux.cpp -o rforth -lm
+g++ -DLINUX_PLATFORM -DUSE_FLOAT=1 -DPAD_SIZE=256 -DHEAP_SIZE=65536 -DCASE_SENSITIVE=1 src/rForth.cpp examples/linux.cpp -Isrc -o rforth -lm
 ```
 
 ## Core Data Types

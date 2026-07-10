@@ -498,11 +498,14 @@ static const Code rom[] = {
     }),
   IMMD(".(",
     {
-      std::string s = read_word(')');
+      std::string s = read_word(')').substr(1);
       if (compile) {
         SYS_MUTEX_LOCK(forth_mutex);
         last->append(new Comment(s, true));
         SYS_MUTEX_UNLOCK(forth_mutex);
+        forth_print([&](std::ostringstream& os) { os << s; });
+      }
+      else {
         forth_print([&](std::ostringstream& os) { os << s; });
       }
     }),
@@ -524,9 +527,14 @@ static const Code rom[] = {
   IMMD(".\"",
     {
       std::string s = read_word('"').substr(1);
-      SYS_MUTEX_LOCK(forth_mutex);
-      last->append(new Str(s, last->token, last->pf.size(), true));
-      SYS_MUTEX_UNLOCK(forth_mutex);
+      if (compile) {
+        SYS_MUTEX_LOCK(forth_mutex);
+        last->append(new Str(s, last->token, last->pf.size(), true));
+        SYS_MUTEX_UNLOCK(forth_mutex);
+      }
+      else {
+        forth_print([&](std::ostringstream& os) { os << s; });
+      }
     }),
   IMMD("s\"",
     {

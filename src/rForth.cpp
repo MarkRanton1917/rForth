@@ -475,7 +475,14 @@ static const Code rom[] = {
       DU v = ss_pop();
       forth_print([&](std::ostringstream& os) { os << std::setbase(BASE) << std::setw(w) << ABS(v); });
     }),
-  CODE("key", ss_push(read_word()[0])),
+  CODE("ascii",
+    {
+      std::string s = read_word();
+      if (s.length() == 1)
+        ss_push((DU)s[0]);
+      else
+        throw std::runtime_error("Invalid ASCII character");
+    }),
   CODE("emit",
     {
       char ch = (char)ss_pop();
@@ -1440,19 +1447,20 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
   auto replace = [&](const std::string& line, const std::string& idiom,
                    const std::string& exception_what) -> std::string {
     std::string ret = line;
-    if (exception_what != "Undefined word") {
+    if (idiom != "see" && idiom != "ascii") {
       size_t pos = line.find(idiom);
       if (pos != std::string::npos)
         ret.replace(pos, idiom.length(), ">>>" + idiom + "<<<");
       else
         ret = ">>>" + idiom + "<<<";
     }
-    else if (idiom == "see") {
-      size_t pos = line.find("see");
+    else {
+      size_t pos = line.find(idiom);
       if (pos != std::string::npos) {
-        std::string nxt = next_token(line, pos + 3);
+        pos += idiom.length();
+        std::string nxt = next_token(line, pos);
         if (!nxt.empty()) {
-          size_t nxt_pos = line.find(nxt, pos + 3);
+          size_t nxt_pos = line.find(nxt, pos);
           if (nxt_pos != std::string::npos)
             ret.replace(nxt_pos, nxt.length(), ">>>" + nxt + "<<<");
           else
@@ -1461,13 +1469,6 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
         else
           ret = line + " >>><<<";
       }
-      else
-        ret = ">>>" + idiom + "<<<";
-    }
-    else {
-      size_t pos = line.find(idiom);
-      if (pos != std::string::npos)
-        ret.replace(pos, idiom.length(), ">>>" + idiom + "<<<");
       else
         ret = ">>>" + idiom + "<<<";
     }

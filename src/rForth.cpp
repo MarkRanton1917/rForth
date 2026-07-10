@@ -99,7 +99,7 @@ static void forth_core(std::string idiom);
 static void forth_task_entry(void* pvParameters);
 
 static FV<Code*> dict;
-static FV<uint8_t> heap;
+static uint8_t heap[HEAP_SIZE];
 static size_t heap_ptr = 0;
 static bool compile = false;
 static Code* last;
@@ -133,7 +133,9 @@ static inline Code* bran_tgt()
 static inline void allot(size_t n)
 {
   heap_ptr += n;
-  if (heap_ptr > heap.size()) heap.resize(heap_ptr + 1024);
+  if (heap_ptr > HEAP_SIZE) {
+    throw std::runtime_error("Heap overflow");
+  }
 }
 
 static const Code rom[] = {
@@ -1412,7 +1414,6 @@ void forth_init()
   dict.reserve(sz * 2);
   for (int i = 0; i < sz; ++i)
     dict_push((Code*)&rom[i]);
-  heap.resize(HEAP_SIZE);
   heap_ptr = sizeof(DU);
   BASE = 10;
   forth_mutex = SYS_MUTEX_CREATE();

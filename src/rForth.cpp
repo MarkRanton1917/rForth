@@ -106,6 +106,9 @@ static Code* last;
 
 static std::istringstream fin;
 static void (*fout_cb)(int, const char*) = nullptr;
+static int (*fin_cb)() = nullptr;
+static std::string fin_buffer = "";
+static bool waiting_input_flag = false;
 
 static THREAD_LOCAL ForthContext* current_ctx = nullptr;
 static FV<ForthContext*> all_contexts;
@@ -484,6 +487,16 @@ static const Code rom[] = {
         ss_push((DU)s[0]);
       else
         throw std::runtime_error("Invalid ASCII character");
+    }),
+  CODE("key",
+    {
+      waiting_input_flag = true;
+      int input;
+      while ((input = fin_cb()) == INPUT_NONE)
+        SYS_SLEEP_MS(10);
+      waiting_input_flag = false;
+      if (input == INPUT_BREAK) throw std::runtime_error("User interrupt");
+      ss_push((DU)input);
     }),
   CODE("emit",
     {
@@ -1429,7 +1442,7 @@ void forth_init()
   current_ctx = ctx0;
 }
 
-int forth_vm(const char* cmd, void (*hook)(int, const char*))
+int forth_interpret(std::string input, void (*output_hook)(int, const char*))
 {
   static uint err_cnt = 0;
   bool error_occured = false;
@@ -1485,7 +1498,7 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
       catch (std::exception& e) {
         forth_print([&](std::ostringstream& os) {
           os << ENDL;
-          os << ":" << ++err_cnt << ": " << e.what() << ENDL;
+          os << ":" << err_cnt++ << ": " << e.what() << ENDL;
           std::string marked_line = replace(current_line, idiom, e.what());
           os << marked_line << ENDL;
         });
@@ -1506,10 +1519,10 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
     }
   };
 
-  auto cb = [](int, const char*) {};
-  fout_cb = hook ? hook : cb;
+  auto fout_cb_default = [](int, const char*) {};
+  fout_cb = output_hook ? output_hook : fout_cb_default;
 
-  std::istringstream istm(cmd);
+  std::istringstream istm(input);
   std::string line;
 
   while (getline(istm, line)) {
@@ -1526,7 +1539,35 @@ int forth_vm(const char* cmd, void (*hook)(int, const char*))
         os << " ok" << ENDL;
     });
   }
+  fin_buffer = "";
   return 0;
+}
+
+int forth_vm(int (*input_hook)(), void (*output_hook)(int, const char*))
+{
+  auto fout_cb_default = [](int, const char*) {};
+  fout_cb = output_hook ? output_hook : fout_cb_default;
+
+  auto fin_cb_default = []() -> int { return INPUT_NONE; };
+  fin_cb = input_hook ? input_hook : fin_cb_default;
+
+  int input = fin_cb();
+  switch (input) {
+  case INPUT_NONE:
+    return -1;
+  default:
+    fin_buffer += (char)input;
+    break;
+  }
+  if (strcmp(fin_buffer.c_str() + sizeof(char) * (fin_buffer.length() - strlen(INPUT_ENDL)), INPUT_ENDL) == 0) {
+    return forth_interpret(fin_buffer, output_hook);
+  }
+  return -1;
+}
+
+bool forth_waiting_input()
+{
+  return waiting_input_flag;
 }
 
 static void backtrace()
@@ -1684,6 +1725,10 @@ void Code::exec()
   };
 
   ForthContext* ctx = current_ctx;
+
+  if (fin_cb() == INPUT_BREAK) {
+    throw std::runtime_error("User interrupt");
+  }
 
   if (xt != nullptr) {
     if (abort_requested.load()) {

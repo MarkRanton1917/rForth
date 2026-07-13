@@ -39,7 +39,7 @@ bool forth_include(const char* fname)
       }
       ++p;
     }
-    forth_vm(cmd, dumb);
+    forth_interpret(cmd, NULL);
   }
   fclose(file);
   return true;
@@ -71,7 +71,7 @@ extern "C" void app_main()
       tib[pos] = 0;
       if (pos) {
         printf("%s ", tib);
-        forth_vm(tib, rsp_to_con);
+        forth_interpret(tib, rsp_to_con);
       }
       pos = 0;
       vTaskDelay(1);

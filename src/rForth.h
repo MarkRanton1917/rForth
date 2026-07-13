@@ -18,8 +18,11 @@
 #define LT(a, b) ((a) < (b))
 #define GT(a, b) ((a) > (b))
 #define RND() (rand())
-#define ENDL "\r\n"
+#define ENDL "\n"
 #define MARKER_FRAME ((DU)0xDEADBEEF)
+#define INPUT_NONE -1
+#define INPUT_BREAK 3
+#define INPUT_ENDL ENDL
 
 #if CASE_SENSITIVE
 #define STRCMP(a, b) (strcmp(a, b))
@@ -136,9 +139,10 @@ struct ForthContext {
 };
 
 void forth_init();
-int forth_vm(const char* cmd, void (*hook)(int, const char*));
+int forth_interpret(std::string input, void (*output_hook)(int, const char*));
+int forth_vm(int (*input_hook)(), void (*output_hook)(int, const char*));
+bool forth_waiting_input();
 void dict_add(const Code* words, size_t size);
-
 void ss_push(DU n);
 DU ss_pop();
 DU alloc_heap(const uint8_t* val, size_t size);

@@ -40,7 +40,7 @@ bool forth_include(const char* fname)
   while (fgets(line, sizeof(line), file)) {
     size_t len = strlen(line);
     if (len > 0 && line[len - 1] == '\n') line[len - 1] = '\0';
-    forth_vm(line, dumb);
+    forth_interpret(line, dumb);
   }
 
   fclose(file);
@@ -63,7 +63,7 @@ int main()
       std::cout.flush();
     };
 
-    forth_vm(tib.c_str(), rsp_to_con);
+    forth_interpret(tib.c_str(), rsp_to_con);
   }
   return 0;
 }

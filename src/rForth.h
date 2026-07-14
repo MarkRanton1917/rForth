@@ -137,6 +137,7 @@ struct ForthContext {
   bool active;
   char pad[PAD_SIZE];
   size_t pad_ptr;
+  int key_peek = INPUT_NONE;
 };
 
 void forth_init();

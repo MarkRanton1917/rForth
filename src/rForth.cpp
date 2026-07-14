@@ -492,11 +492,30 @@ static const Code rom[] = {
     {
       waiting_input_flag = true;
       int input;
-      while ((input = fin_cb()) == INPUT_NONE)
-        SYS_SLEEP_MS(10);
+      if (current_ctx->key_peek != INPUT_NONE) {
+        input = current_ctx->key_peek;
+        current_ctx->key_peek = INPUT_NONE;
+      }
+      else {
+        while ((input = fin_cb()) == INPUT_NONE)
+          SYS_SLEEP_MS(10);
+      }
       waiting_input_flag = false;
       if (input == INPUT_BREAK) throw std::runtime_error("User interrupt");
       ss_push((DU)input);
+    }),
+  CODE("key?",
+    {
+      if (current_ctx->key_peek == INPUT_NONE) {
+        waiting_input_flag = true;
+        current_ctx->key_peek = fin_cb();
+        waiting_input_flag = false;
+      }
+      if (current_ctx->key_peek == INPUT_BREAK) {
+        current_ctx->key_peek = INPUT_NONE;
+        throw std::runtime_error("User interrupt");
+      }
+      ss_push(BOOL(current_ctx->key_peek != INPUT_NONE));
     }),
   CODE("emit",
     {
@@ -1504,6 +1523,7 @@ int forth_interpret(std::string input, void (*output_hook)(int, const char*))
         current_ctx->call_stack.clear();
         current_ctx->pf = nullptr;
         current_ctx->ip = 0;
+        current_ctx->key_peek = INPUT_NONE;
         compile = false;
         getline(fin, idiom, '\n');
         abort_all_tasks();
@@ -1675,6 +1695,7 @@ static void abort_all_tasks()
   ctx0->ip = 0;
   ctx0->finished = false;
   ctx0->active = true;
+  ctx0->key_peek = INPUT_NONE;
   current_ctx = ctx0;
 
   abort_message.clear();

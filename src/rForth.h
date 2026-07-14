@@ -33,7 +33,8 @@
 
 #define CODE(s, g) { s, #g, [](Code *c) { g; }, __COUNTER__ }
 #define IMMD(s, g) { s, #g, [](Code *c) { g; }, __COUNTER__ | Code::IMMD_FLAG }
-#define COMP(s, g) { s, #g, [](Code *c) { g; }, __COUNTER__ | Code::IMMD_FLAG | Code::COMPILE_ONLY_FLAG }
+#define COMP(s, g) { s, #g, [](Code *c) { g; }, __COUNTER__ | Code::COMPILE_ONLY_FLAG }
+#define ICOMP(s, g) { s, #g, [](Code *c) { g; }, __COUNTER__ | Code::IMMD_FLAG | Code::COMPILE_ONLY_FLAG }
 #define BOOL(f) ((f) ? -1 : 0)
 
 typedef uint32_t U32;

@@ -637,14 +637,14 @@ static const Code rom[] = {
       if (current_ctx->pad_ptr == 0) throw std::runtime_error("PAD overflow");
       current_ctx->pad[--current_ctx->pad_ptr] = ch;
     }),
-  COMP("if",
+  ICOMP("if",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       last->append(new Bran(_if));
       dict_push(new Tmp());
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  COMP("else",
+  ICOMP("else",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = bran_tgt();
@@ -652,7 +652,7 @@ static const Code rom[] = {
       b->stage = 1;
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  COMP("then",
+  ICOMP("then",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = bran_tgt();
@@ -667,14 +667,14 @@ static const Code rom[] = {
       }
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  COMP("begin",
+  ICOMP("begin",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       last->append(new Bran(_begin));
       dict_push(new Tmp());
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  COMP("while",
+  ICOMP("while",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = bran_tgt();
@@ -682,7 +682,7 @@ static const Code rom[] = {
       b->stage = 2;
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  COMP("repeat",
+  ICOMP("repeat",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = bran_tgt();
@@ -690,7 +690,7 @@ static const Code rom[] = {
       dict_pop();
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  COMP("again",
+  ICOMP("again",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = bran_tgt();
@@ -699,7 +699,7 @@ static const Code rom[] = {
       b->stage = 1;
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  COMP("until",
+  ICOMP("until",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = bran_tgt();
@@ -707,7 +707,7 @@ static const Code rom[] = {
       dict_pop();
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  COMP("do",
+  ICOMP("do",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       last->append(new Bran(_tor2));
@@ -716,13 +716,8 @@ static const Code rom[] = {
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   CODE("i", ss_push(current_ctx->rs[-1])),
-  COMP("leave",
-    {
-      current_ctx->rs.pop();
-      current_ctx->rs.pop();
-      unnest();
-    }),
-  COMP("loop",
+  COMP("leave", { throw 0; }),
+  ICOMP("loop",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = bran_tgt();
@@ -732,7 +727,7 @@ static const Code rom[] = {
       dict_pop();
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  COMP("+loop",
+  ICOMP("+loop",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = bran_tgt();
@@ -752,7 +747,7 @@ static const Code rom[] = {
       compile = true;
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  COMP(";",
+  ICOMP(";",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       compile = false;
@@ -794,7 +789,7 @@ static const Code rom[] = {
       last->append(new Var((DU)&heap[heap_ptr]));
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
-  COMP("does>",
+  ICOMP("does>",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       last->append(new Bran(_does));
@@ -863,7 +858,7 @@ static const Code rom[] = {
       else
         throw std::runtime_error("Undefined word");
     }),
-  COMP("[']",
+  ICOMP("[']",
     {
       std::string s = read_word();
       Code* w = find(s);

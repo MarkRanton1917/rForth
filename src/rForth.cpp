@@ -1995,7 +1995,13 @@ static void _abort(Code* c)
 static std::string read_word(char delim)
 {
   std::string s;
-  delim ? getline(fin, s, delim) : fin >> s;
+  if (delim) {
+    getline(fin, s, delim);
+    if (fin.eof()) throw std::runtime_error(std::string("Missing closing '") + delim + "'");
+  }
+  else {
+    fin >> s;
+  }
   return s;
 }
 

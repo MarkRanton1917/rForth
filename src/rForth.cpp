@@ -517,6 +517,42 @@ static const Code rom[] = {
       }
       ss_push(BOOL(current_ctx->key_peek != INPUT_NONE));
     }),
+  CODE("accept",
+    {
+      DU n1 = ss_pop();
+      char* addr = reinterpret_cast<char*>(ss_pop());
+      int count = 0;
+      for (;;) {
+        waiting_input_flag = true;
+        int input;
+        if (current_ctx->key_peek != INPUT_NONE) {
+          input = current_ctx->key_peek;
+          current_ctx->key_peek = INPUT_NONE;
+        }
+        else {
+          while ((input = fin_cb()) == INPUT_NONE)
+            SYS_SLEEP_MS(10);
+        }
+        waiting_input_flag = false;
+        if (input == INPUT_BREAK) throw std::runtime_error("User interrupt");
+        if (input == '\n' || input == '\r') {
+          forth_print([&](std::ostringstream& os) { os << ENDL; });
+          break;
+        }
+        if (input == '\b') {
+          if (count > 0) {
+            count--;
+            forth_print([&](std::ostringstream& os) { os << (char)'\b'; });
+          }
+          continue;
+        }
+        if (count < (int)n1) {
+          addr[count++] = (char)input;
+          forth_print([&](std::ostringstream& os) { os << (char)input; });
+        }
+      }
+      ss_push(count);
+    }),
   CODE("emit",
     {
       char ch = (char)ss_pop();

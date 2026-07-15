@@ -178,7 +178,9 @@ All built-in words available in rForth, organized by category:
 
 ### Input/Output
 - `emit ( c -- )` - Output a character (ASCII code)
-- `key ( -- c )` - Read a character
+- `key ( -- c )` - Read a character (blocking)
+- `key? ( -- flag )` - Check if a character is available (non-blocking)
+- `accept ( c-addr +n1 -- +n2 )` - Read up to +n1 characters into buffer with backspace editing, returns actual count
 - `cr ( -- )` - Output carriage return and line feed
 - `space ( -- )` - Output one space
 - `spaces ( n -- )` - Output n spaces

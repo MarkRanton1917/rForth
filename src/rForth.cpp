@@ -1742,7 +1742,7 @@ void Code::exec()
 
   ForthContext* ctx = current_ctx;
 
-  if (fin_cb() == INPUT_BREAK) {
+  if (fin_cb && fin_cb() == INPUT_BREAK) {
     throw std::runtime_error("User interrupt");
   }
 
@@ -2149,11 +2149,7 @@ static DU parse_number(std::string idiom)
   }
   char* p;
   errno = 0;
-#if DU == float
-  DU n = (b == 10) ? strtof(cs, &p) : strtol(cs, &p, b);
-#else
   DU n = strtol(cs, &p, b);
-#endif
   if (errno || *p != '\0') throw std::runtime_error("Undefined word");
   return n;
 }
@@ -2272,6 +2268,7 @@ Code::Code(std::string s, bool n)
   name = (new std::string(s))->c_str();
   desc = "";
   xt = w ? w->xt : nullptr;
+  attr = 0;
   token = n ? dict.size() : 0;
   if (n && w) {
     forth_print([&](std::ostringstream& os) { os << "redefined " << s << " "; });

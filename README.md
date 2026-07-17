@@ -11,6 +11,7 @@ A lightweight, efficient **Forth interpreter** implementation designed for embed
 - **Interactive interpreter** - Read-Eval-Print Loop (REPL) for real-time code execution
 - **Word definitions** - Define custom words with `:` (colon) definitions
 - **Control structures** - `if/then`, `begin/until`, `begin/while/repeat`, `do/loop`, `do/+loop`
+- **Local variables** - `{: ... :}` named locals with `->` assignment, usable anywhere in a word body (including inside loops), with full recursion support
 - **Memory management** - Configurable heap size with dynamic memory allocation
 - **Case-sensitive or case-insensitive mode** - Compile-time configurable
 
@@ -108,6 +109,72 @@ tid @ active? if ." Task is running" cr then
 \ Pause to yield control to other tasks
 pause
 ```
+
+## Local Variables
+
+rForth supports named local variables declared with `{: ... :}`. Once declared, a local is read simply by naming it, and written with `->`.
+
+### Declaring locals
+
+```forth
+: SUM3  {: a b c -- total :}
+  a b c + +  -> total
+  total ;
+
+1 2 3 SUM3 .          \ 6
+```
+
+- Names listed **before** `--` are popped off the data stack, left to right (the rightmost name gets the top of stack).
+- Names listed **after** `--` (or all names, if `--` is omitted) are plain local variables, initialized to `0`.
+- `{: ... :}` — including its name list — must fit on a single source line, the same restriction as `."`, `s"` and `abort"`.
+- Writing to a local is always explicit, via `-> name`; reading it is just using its name like any other word.
+
+### Where `{:` can appear
+
+Unlike many other Forth locals implementations, `{: ... :}` is **not** restricted to the very start of a word. It can appear anywhere in the body — after other code, inside `if`/`else`, inside `begin`/`until`, and even inside `do...loop` (each loop iteration reuses the same slot instead of leaking a new one on every pass):
+
+```forth
+: SUM-OF-SQUARES  {: n :}
+  0
+  n 0 do
+    {: -- sq :}        \ (re)declared fresh on every iteration
+    i i * -> sq
+    sq +
+  loop ;
+
+5 SUM-OF-SQUARES .      \ 30  (0+1+4+9+16)
+```
+
+Additional `{: ... :}` blocks later in the same word simply add more locals to the same frame:
+
+```forth
+: DIST  {: x1 y1 :}
+  {: x2 y2 :}
+  x2 x1 - dup *
+  y2 y1 - dup * + ;
+
+0 0 3 4 DIST .           \ 25
+```
+
+Recursion is fully supported — every recursive call gets its own independent set of locals, isolated from every other call on the stack:
+
+```forth
+: FACT  {: n :}
+  n 1 <= if
+    1
+  else
+    n 1 - {: sub :}
+    sub FACT n * -> sub
+    sub
+  then ;
+
+5 FACT .                 \ 120
+```
+
+### Limitations
+
+- The name list of a `{: ... :}` block must be entirely on one source line.
+- A local declared inside only *one* branch of `if ... else ... then`, and then read after the branches merge (past `then`), is not supported — declare such locals either unconditionally (before the `if`) or symmetrically, with the same names in the same order, in both branches.
 
 ## Complete Word Reference
 
@@ -253,6 +320,10 @@ All built-in words available in rForth, organized by category:
 - `i ( -- n )` - Get current loop index
 - `leave ( -- )` - Exit loop immediately
 - `exit ( -- )` - Exit from current word
+
+### Local Variables (compile-only)
+- `{: name1 name2 ... -- name3 name4 ... :}` - Declare local variables. Names before `--` are popped off the data stack (rightmost name gets top of stack); names after `--` (or all names, if `--` is omitted) are plain locals initialized to `0`. See [Local Variables](#local-variables) below for details.
+- `-> name` - Pop the top of the data stack into the named local
 
 ### Timing and System
 - `ms ( -- ms )` - Get milliseconds since boot

@@ -19,7 +19,8 @@
 #define GT(a, b) ((a) > (b))
 #define RND() (rand())
 #define ENDL "\n"
-#define MARKER_FRAME ((DU)0xDEADBEEF)
+#define WORD_MARKER_FRAME ((DU)0xDEADBEEF)
+#define LOCALS_MARKER_FRAME ((DU)0xFEEDC0DE)
 #define INPUT_NONE -1
 #define INPUT_BREAK 3
 #define INPUT_ENDL ENDL
@@ -125,6 +126,7 @@ struct Bran : Code {
 struct ForthContext {
   FV<DU> ss;
   FV<DU> rs;
+  FV<DU> ls;
 #if USE_FLOAT
   FV<DF> fs;
 #endif
@@ -138,6 +140,11 @@ struct ForthContext {
   char pad[PAD_SIZE];
   size_t pad_ptr;
   int key_peek = INPUT_NONE;
+};
+
+struct Local {
+  std::string name;
+  int slot;
 };
 
 void forth_init();

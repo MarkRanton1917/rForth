@@ -125,7 +125,8 @@ static std::istringstream fin;
 static void (*fout_cb)(int, const char*) = nullptr;
 static int (*fin_cb)() = nullptr;
 static std::string fin_buffer = "";
-static bool waiting_input_flag = false;
+static std::atomic<bool> waiting_input { false };
+static std::atomic<bool> interrupt_requested { false };
 
 static THREAD_LOCAL ForthContext* current_ctx = nullptr;
 static FV<ForthContext*> all_contexts;
@@ -644,7 +645,7 @@ static const Code rom[] = {
     }),
   CODE("key",
     {
-      waiting_input_flag = true;
+      waiting_input = true;
       int input;
       if (current_ctx->key_peek != INPUT_NONE) {
         input = current_ctx->key_peek;
@@ -654,16 +655,16 @@ static const Code rom[] = {
         while ((input = fin_cb()) == INPUT_NONE)
           SYS_SLEEP_MS(10);
       }
-      waiting_input_flag = false;
+      waiting_input = false;
       if (input == INPUT_BREAK) throw std::runtime_error("User interrupt");
       ss_push((DU)input);
     }),
   CODE("key?",
     {
       if (current_ctx->key_peek == INPUT_NONE) {
-        waiting_input_flag = true;
+        waiting_input = true;
         current_ctx->key_peek = fin_cb();
-        waiting_input_flag = false;
+        waiting_input = false;
       }
       if (current_ctx->key_peek == INPUT_BREAK) {
         current_ctx->key_peek = INPUT_NONE;
@@ -677,7 +678,7 @@ static const Code rom[] = {
       char* addr = reinterpret_cast<char*>(ss_pop());
       int count = 0;
       for (;;) {
-        waiting_input_flag = true;
+        waiting_input = true;
         int input;
         if (current_ctx->key_peek != INPUT_NONE) {
           input = current_ctx->key_peek;
@@ -687,7 +688,7 @@ static const Code rom[] = {
           while ((input = fin_cb()) == INPUT_NONE)
             SYS_SLEEP_MS(10);
         }
-        waiting_input_flag = false;
+        waiting_input = false;
         if (input == INPUT_BREAK) throw std::runtime_error("User interrupt");
         if (input == '\n' || input == '\r') {
           forth_print([&](std::ostringstream& os) { os << ENDL; });
@@ -1880,7 +1881,12 @@ int forth_vm(int (*input_hook)(), void (*output_hook)(int, const char*))
 
 bool forth_waiting_input()
 {
-  return waiting_input_flag;
+  return waiting_input;
+}
+
+void forth_request_interrupt()
+{
+  interrupt_requested.store(true);
 }
 
 static void backtrace()
@@ -2056,7 +2062,7 @@ void Code::exec()
 
   ForthContext* ctx = current_ctx;
 
-  if (fin_cb && fin_cb() == INPUT_BREAK) {
+  if (interrupt_requested.exchange(false)) {
     throw std::runtime_error("User interrupt");
   }
 
@@ -2198,14 +2204,12 @@ static void _locals_enter(Code* c)
   }
 
   size_t base = locals_base();
-  bool repeat = current_ctx->ls.size() >= base + (size_t)slot_start + (size_t)total;
+  size_t need = base + (size_t)slot_start + (size_t)total;
+  if (current_ctx->ls.size() < need) current_ctx->ls.resize(need, DU0);
 
   for (int i = 0; i < total; ++i) {
     DU val = (i < from_stack) ? tmp[i] : DU0;
-    if (repeat)
-      current_ctx->ls[(int)(base + slot_start + i)] = val;
-    else
-      current_ctx->ls.push_back(val);
+    current_ctx->ls[base + slot_start + i] = val;
   }
 }
 
@@ -2566,7 +2570,6 @@ static std::optional<std::pair<DU, DU>> parse_double(const std::string& s)
   if (i == digits_start || i != s.size() - 1 || s[i] != '.') return std::nullopt;
 
   std::string digits = s.substr(0, s.size() - 1);
-  if (parse_number(digits)) return std::nullopt;
 
   errno = 0;
   char* p;

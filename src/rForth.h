@@ -169,6 +169,7 @@ void forth_init();
 int forth_interpret(std::string input, void (*output_hook)(int, const char*));
 int forth_vm(int (*input_hook)(), void (*output_hook)(int, const char*));
 bool forth_waiting_input();
+void forth_request_interrupt();
 void dict_add(const Code* words, size_t size);
 void ss_push(DU n);
 DU ss_pop();

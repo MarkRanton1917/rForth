@@ -24,8 +24,6 @@ void mem_stat()
 
 bool forth_include(const char* fname)
 {
-  auto dumb = [](int, const char*) {};
-
   FILE* file = fopen(fname, "r");
   if (!file) return false;
 
@@ -45,40 +43,37 @@ bool forth_include(const char* fname)
   return true;
 }
 
+static int read_char()
+{
+  int c;
+  while ((c = getchar()) < 0)
+    vTaskDelay(1);
+
+  if (c == '\r') c = '\n';
+
+  if (!forth_waiting_input()) {
+    if (c == '\n')
+      printf("\n");
+    else if (c == '\b' || c == 127)
+      printf("\b \b");
+    else
+      putchar(c);
+  }
+  return c;
+}
+
 extern "C" void app_main()
 {
   init();
   forth_init();
   mem_stat();
 
-  char tib[256];
-  size_t pos = 0;
-
   auto rsp_to_con = [](int, const char* rst) { printf("%s", rst); };
 
+  printf("> ");
   while (true) {
-
-    int c = getchar();
-
-    if (c < 0) {
-      vTaskDelay(1);
-      continue;
-    }
-
-    if (c == '\r') continue;
-
-    if (c == '\n') {
-      tib[pos] = 0;
-      if (pos) {
-        printf("%s ", tib);
-        forth_interpret(tib, rsp_to_con);
-      }
-      pos = 0;
-      vTaskDelay(1);
-      continue;
-    }
-
-    if (pos < sizeof(tib) - 1) tib[pos++] = (char)c;
+    int r = forth_vm(read_char, rsp_to_con);
+    if (r == 0) printf("> ");
   }
 }
 

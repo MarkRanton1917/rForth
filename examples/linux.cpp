@@ -12,6 +12,9 @@
 #include <sstream>
 #include <iostream>
 #include <sys/sysinfo.h>
+#include <termios.h>
+#include <unistd.h>
+#include <csignal>
 
 void mem_stat()
 {
@@ -47,23 +50,75 @@ bool forth_include(const char* fname)
   return true;
 }
 
+static struct termios orig_termios;
+static bool raw_mode_active = false;
+
+static void restore_terminal()
+{
+  if (raw_mode_active) tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios);
+}
+
+static void enable_raw_terminal()
+{
+  if (!isatty(STDIN_FILENO)) return;
+  if (tcgetattr(STDIN_FILENO, &orig_termios) != 0) return;
+  atexit(restore_terminal);
+  struct termios raw = orig_termios;
+  raw.c_lflag &= ~(ICANON | ECHO);
+  tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+  raw_mode_active = true;
+}
+
+static bool input_closed = false;
+
+static void handle_sigint(int)
+{
+  forth_request_interrupt();
+}
+
+static int read_char()
+{
+  unsigned char c;
+  ssize_t n = read(STDIN_FILENO, &c, 1);
+  if (n <= 0) {
+    input_closed = true;
+    return INPUT_BREAK;
+  }
+  if (c == '\r') c = '\n';
+
+  if (!forth_waiting_input()) {
+    if (c == '\n')
+      std::cout << "\r\n";
+    else if (c == '\b' || c == 127)
+      std::cout << "\b \b";
+    else
+      std::cout << (char)c;
+    std::cout.flush();
+  }
+  return c;
+}
+
 int main()
 {
   forth_init();
   mem_stat();
+  enable_raw_terminal();
+  signal(SIGINT, handle_sigint);
 
-  std::string tib;
-  while (true) {
-    std::cout << "> ";
-    std::getline(std::cin, tib);
-    if (tib.empty()) continue;
+  auto rsp_to_con = [](int len, const char* rst) {
+    std::cout.write(rst, len);
+    std::cout.flush();
+  };
 
-    auto rsp_to_con = [](int len, const char* rst) {
-      std::cout.write(rst, len);
+  std::cout << "> ";
+  std::cout.flush();
+  while (!input_closed) {
+    int r = forth_vm(read_char, rsp_to_con);
+    if (input_closed) break;
+    if (r == 0) {
+      std::cout << "> ";
       std::cout.flush();
-    };
-
-    forth_interpret(tib.c_str(), rsp_to_con);
+    }
   }
   return 0;
 }

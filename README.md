@@ -270,7 +270,7 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `key? ( -- flag )` - Check if a character is available (non-blocking)
 - `accept ( c-addr +n1 -- +n2 )` - Read up to +n1 characters into buffer with backspace editing, returns actual count
 - `number ( c-addr len -- n | lo hi )` - Parse a string as a number: a plain integer that fits in a cell; a float when USE_FLOAT=1 (pushed to the float stack instead); or, classic Forth double-number syntax — digits with a trailing `.` and nothing after it (e.g. `123456789012.`) that overflow a single cell — pushed as a `lo hi` pair (the same convention `d>f`/`f>d` use). Throws if the string isn't a valid number.
-- `number? ( c-addr len -- n true | lo hi true | false )` - Like `number`, but returns a false flag instead of throwing on an invalid string
+- `number? ( c-addr len -- n true | lo hi true | c-addr len false )` - Like `number`, but returns a false flag instead of throwing on an invalid string; on failure, the original `c-addr len` are left on the stack below the flag
 - `cr ( -- )` - Output carriage return and line feed
 - `space ( -- )` - Output one space
 - `spaces ( n -- )` - Output n spaces
@@ -564,7 +564,7 @@ Exercises `forget`/`boot` against `CREATE...DOES>` instances, repeated word rede
 
 ### forth/tests/numbers_test.fs
 
-Reads a number from input and doubles it, exercising `accept`, `number?`, and both single- and double-number (`lo hi`) results.
+Reads a number from input and doubles it, exercising `accept`, `number?`, both single- and double-number (`lo hi`) results, and the invalid-input case where `number?` leaves `c-addr len false` on the stack.
 
 ## System Integration
 

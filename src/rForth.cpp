@@ -752,6 +752,8 @@ static const Code rom[] = {
         ss_push(BOOL(true));
       }
       else {
+        ss_push((DU)addr);
+        ss_push(len);
         ss_push(BOOL(false));
       }
     }),

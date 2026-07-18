@@ -24,7 +24,7 @@
       ." Unsupported number format" cr
     then then
   else
-    ." Not a valid number" cr
+    ." Not a valid number: " type cr
   then
   cr
 ;

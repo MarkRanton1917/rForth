@@ -14,6 +14,9 @@
 #include <cctype>
 #include <atomic>
 #include <memory>
+#include <optional>
+#include <utility>
+#include <limits>
 
 #define BASE (*(DU*)(&(heap[0])))
 
@@ -98,6 +101,11 @@ static void abort_all_tasks();
 static void backtrace();
 static void forth_core(std::string idiom);
 static void forth_task_entry(void* pvParameters);
+static std::optional<DU> parse_number(const std::string& s);
+static std::optional<std::pair<DU, DU>> parse_double(const std::string& s);
+#if USE_FLOAT
+static std::optional<DF> parse_float(const std::string& s);
+#endif
 
 static void _locals_enter(Code* c);
 static void _local_fetch(Code* c);
@@ -163,6 +171,20 @@ static inline void allot(size_t n)
   }
 }
 
+static inline DU2 pack_double(DU lo, DU hi)
+{
+  uint64_t uv = (static_cast<uint64_t>(static_cast<uint32_t>(hi)) << 32) | static_cast<uint32_t>(lo);
+  return static_cast<DU2>(uv);
+}
+
+static inline std::pair<DU, DU> unpack_double(DU2 v)
+{
+  uint64_t uv = static_cast<uint64_t>(v);
+  DU lo = static_cast<DU>(uv & 0xFFFFFFFFu);
+  DU hi = static_cast<DU>((uv >> 32) & 0xFFFFFFFFu);
+  return std::make_pair(lo, hi);
+}
+
 static const Code rom[] = {
   CODE("bye", exit(0)),
   CODE("+",
@@ -219,6 +241,116 @@ static const Code rom[] = {
       DU2 m = MOD(n, c);
       ss_push((DU)m);
       ss_push((DU)(n / c));
+    }),
+  CODE("s>d",
+    {
+      DU n = ss_pop();
+      auto d = unpack_double((DU2)n);
+      ss_push(d.first);
+      ss_push(d.second);
+    }),
+  CODE("d>s",
+    {
+      DU hi = ss_pop();
+      DU lo = ss_pop();
+      (void)hi;
+      ss_push(lo);
+    }),
+  CODE("d+",
+    {
+      DU hi2 = ss_pop();
+      DU lo2 = ss_pop();
+      DU hi1 = ss_pop();
+      DU lo1 = ss_pop();
+      auto d = unpack_double(pack_double(lo1, hi1) + pack_double(lo2, hi2));
+      ss_push(d.first);
+      ss_push(d.second);
+    }),
+  CODE("d-",
+    {
+      DU hi2 = ss_pop();
+      DU lo2 = ss_pop();
+      DU hi1 = ss_pop();
+      DU lo1 = ss_pop();
+      auto d = unpack_double(pack_double(lo1, hi1) - pack_double(lo2, hi2));
+      ss_push(d.first);
+      ss_push(d.second);
+    }),
+  CODE("dnegate",
+    {
+      DU hi = ss_pop();
+      DU lo = ss_pop();
+      auto d = unpack_double(-pack_double(lo, hi));
+      ss_push(d.first);
+      ss_push(d.second);
+    }),
+  CODE("dabs",
+    {
+      DU hi = ss_pop();
+      DU lo = ss_pop();
+      DU2 v = pack_double(lo, hi);
+      if (v < 0) v = -v;
+      auto d = unpack_double(v);
+      ss_push(d.first);
+      ss_push(d.second);
+    }),
+  CODE("dmax",
+    {
+      DU hi2 = ss_pop();
+      DU lo2 = ss_pop();
+      DU hi1 = ss_pop();
+      DU lo1 = ss_pop();
+      DU2 a = pack_double(lo1, hi1);
+      DU2 b = pack_double(lo2, hi2);
+      auto d = unpack_double((a > b) ? a : b);
+      ss_push(d.first);
+      ss_push(d.second);
+    }),
+  CODE("dmin",
+    {
+      DU hi2 = ss_pop();
+      DU lo2 = ss_pop();
+      DU hi1 = ss_pop();
+      DU lo1 = ss_pop();
+      DU2 a = pack_double(lo1, hi1);
+      DU2 b = pack_double(lo2, hi2);
+      auto d = unpack_double((a < b) ? a : b);
+      ss_push(d.first);
+      ss_push(d.second);
+    }),
+  CODE("d=",
+    {
+      DU hi2 = ss_pop();
+      DU lo2 = ss_pop();
+      DU hi1 = ss_pop();
+      DU lo1 = ss_pop();
+      ss_push(BOOL(pack_double(lo1, hi1) == pack_double(lo2, hi2)));
+    }),
+  CODE("d<",
+    {
+      DU hi2 = ss_pop();
+      DU lo2 = ss_pop();
+      DU hi1 = ss_pop();
+      DU lo1 = ss_pop();
+      ss_push(BOOL(pack_double(lo1, hi1) < pack_double(lo2, hi2)));
+    }),
+  CODE("d0=",
+    {
+      DU hi = ss_pop();
+      DU lo = ss_pop();
+      ss_push(BOOL(pack_double(lo, hi) == 0));
+    }),
+  CODE("d0<",
+    {
+      DU hi = ss_pop();
+      DU lo = ss_pop();
+      ss_push(BOOL(pack_double(lo, hi) < 0));
+    }),
+  CODE("d.",
+    {
+      DU hi = ss_pop();
+      DU lo = ss_pop();
+      forth_print([&](std::ostringstream& os) { os << std::setbase(BASE) << pack_double(lo, hi) << " "; });
     }),
   CODE("and",
     {
@@ -574,6 +706,53 @@ static const Code rom[] = {
         }
       }
       ss_push(count);
+    }),
+  CODE("number",
+    {
+      DU len = ss_pop();
+      const char* addr = reinterpret_cast<const char*>(ss_pop());
+      std::string s(addr, (size_t)len);
+      if (auto dbl = parse_double(s)) {
+        ss_push(dbl->first);
+        ss_push(dbl->second);
+        return;
+      }
+#if USE_FLOAT
+      if (auto fval = parse_float(s)) {
+        fs_push(*fval);
+        return;
+      }
+#endif
+      auto n = parse_number(s);
+      if (!n) throw std::runtime_error("Invalid number");
+      ss_push(*n);
+    }),
+  CODE("number?",
+    {
+      DU len = ss_pop();
+      const char* addr = reinterpret_cast<const char*>(ss_pop());
+      std::string s(addr, (size_t)len);
+      if (auto dbl = parse_double(s)) {
+        ss_push(dbl->first);
+        ss_push(dbl->second);
+        ss_push(BOOL(true));
+        return;
+      }
+#if USE_FLOAT
+      if (auto fval = parse_float(s)) {
+        fs_push(*fval);
+        ss_push(BOOL(true));
+        return;
+      }
+#endif
+      auto n = parse_number(s);
+      if (n) {
+        ss_push(*n);
+        ss_push(BOOL(true));
+      }
+      else {
+        ss_push(BOOL(false));
+      }
     }),
   CODE("emit",
     {
@@ -980,6 +1159,7 @@ static const Code rom[] = {
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   CODE("here", ss_push((DU)&heap[heap_ptr])),
+  CODE("pad", ss_push((DU)current_ctx->pad)),
   CODE("'",
     {
       std::string s = read_word();
@@ -2334,30 +2514,24 @@ static Code* find(std::string s)
 }
 
 #if USE_FLOAT
-static bool parse_float(const std::string& s, DF& out)
+static std::optional<DF> parse_float(const std::string& s)
 {
   bool has_dot = s.find('.') != std::string::npos;
   bool has_e = s.find('e') != std::string::npos || s.find('E') != std::string::npos;
-  if (!has_dot && !has_e) return false;
+  if (!has_dot && !has_e) return std::nullopt;
 
   char* end;
   DF v = strtod(s.c_str(), &end);
 
-  if (*end == '\0') {
-    out = v;
-    return true;
-  }
-  if ((*end == 'e' || *end == 'E') && *(end + 1) == '\0') {
-    out = v;
-    return true;
-  }
-  return false;
+  if (*end == '\0') return v;
+  if ((*end == 'e' || *end == 'E') && *(end + 1) == '\0') return v;
+  return std::nullopt;
 }
 #endif
 
-static DU parse_number(std::string idiom)
+static std::optional<DU> parse_number(const std::string& s)
 {
-  const char* cs = idiom.c_str();
+  const char* cs = s.c_str();
   int b = BASE;
   switch (*cs) {
   case '%':
@@ -2376,9 +2550,30 @@ static DU parse_number(std::string idiom)
   }
   char* p;
   errno = 0;
-  DU n = strtol(cs, &p, b);
-  if (errno || *p != '\0') throw std::runtime_error("Undefined word");
-  return n;
+  long n = strtol(cs, &p, b);
+  if (errno || *p != '\0') return std::nullopt;
+  if (n < (long)std::numeric_limits<DU>::min() || n > (long)std::numeric_limits<DU>::max()) return std::nullopt;
+  return (DU)n;
+}
+
+static std::optional<std::pair<DU, DU>> parse_double(const std::string& s)
+{
+  size_t i = 0;
+  if (i < s.size() && (s[i] == '+' || s[i] == '-')) i++;
+  size_t digits_start = i;
+  while (i < s.size() && isdigit((unsigned char)s[i]))
+    i++;
+  if (i == digits_start || i != s.size() - 1 || s[i] != '.') return std::nullopt;
+
+  std::string digits = s.substr(0, s.size() - 1);
+  if (parse_number(digits)) return std::nullopt;
+
+  errno = 0;
+  char* p;
+  DU2 v = static_cast<DU2>(strtoll(digits.c_str(), &p, BASE));
+  if (errno || *p != '\0') return std::nullopt;
+
+  return unpack_double(v);
 }
 
 template<typename Fn>
@@ -2444,28 +2639,41 @@ static void forth_core(std::string idiom)
     return;
   }
 
-#if USE_FLOAT
-  DF fval;
-  if (parse_float(idiom, fval)) {
+  if (auto dbl = parse_double(idiom)) {
     if (compile) {
       SYS_MUTEX_LOCK(forth_mutex);
-      last->append(std::make_shared<FLit>(fval));
+      last->append(std::make_shared<Lit>(dbl->first));
+      last->append(std::make_shared<Lit>(dbl->second));
       SYS_MUTEX_UNLOCK(forth_mutex);
     }
     else {
-      fs_push(fval);
+      current_ctx->ss.push(dbl->first);
+      current_ctx->ss.push(dbl->second);
+    }
+    return;
+  }
+#if USE_FLOAT
+  if (auto fval = parse_float(idiom)) {
+    if (compile) {
+      SYS_MUTEX_LOCK(forth_mutex);
+      last->append(std::make_shared<FLit>(*fval));
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }
+    else {
+      fs_push(*fval);
     }
     return;
   }
 #endif
-  DU n = parse_number(idiom);
+  auto n = parse_number(idiom);
+  if (!n) throw std::runtime_error("Undefined word");
   if (compile) {
     SYS_MUTEX_LOCK(forth_mutex);
-    last->append(std::make_shared<Lit>(n));
+    last->append(std::make_shared<Lit>(*n));
     SYS_MUTEX_UNLOCK(forth_mutex);
   }
   else {
-    current_ctx->ss.push(n);
+    current_ctx->ss.push(*n);
   }
 }
 

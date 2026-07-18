@@ -192,6 +192,24 @@ All built-in words available in rForth, organized by category:
 - `/mod ( n1 n2 -- rem quot )` - Both remainder and quotient
 - `*/mod ( n1 n2 n3 -- rem quot )` - (n1 * n2) mod n3, then quot
 
+### Double-Number Operations
+
+Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting integers wider than a single cell round-trip through the stack. `number`/`number?` produce a `lo hi` pair for a classic Forth double literal (digits with a trailing `.`, e.g. `123456789012.`) that overflows a single cell.
+
+- `s>d ( n -- lo hi )` - Sign-extend a single number to double
+- `d>s ( lo hi -- n )` - Truncate a double to a single number (drops the high cell)
+- `d+ ( lo1 hi1 lo2 hi2 -- lo3 hi3 )` - Double addition
+- `d- ( lo1 hi1 lo2 hi2 -- lo3 hi3 )` - Double subtraction
+- `dnegate ( lo hi -- -lo -hi )` - Negate
+- `dabs ( lo hi -- |lo| |hi| )` - Absolute value
+- `dmax ( d1 d2 -- d )` - Maximum of two doubles
+- `dmin ( d1 d2 -- d )` - Minimum of two doubles
+- `d= ( d1 d2 -- flag )` - Equality
+- `d< ( d1 d2 -- flag )` - Less than (signed)
+- `d0= ( lo hi -- flag )` - Zero equal
+- `d0< ( lo hi -- flag )` - Zero less (negative)
+- `d. ( lo hi -- )` - Print a double number in the current base
+
 ### Bitwise Operations
 - `and ( u1 u2 -- u )` - Bitwise AND
 - `or ( u1 u2 -- u )` - Bitwise OR
@@ -250,6 +268,8 @@ All built-in words available in rForth, organized by category:
 - `key ( -- c )` - Read a character (blocking)
 - `key? ( -- flag )` - Check if a character is available (non-blocking)
 - `accept ( c-addr +n1 -- +n2 )` - Read up to +n1 characters into buffer with backspace editing, returns actual count
+- `number ( c-addr len -- n | lo hi )` - Parse a string as a number: a plain integer that fits in a cell; a float when USE_FLOAT=1 (pushed to the float stack instead); or, classic Forth double-number syntax — digits with a trailing `.` and nothing after it (e.g. `123456789012.`) that overflow a single cell — pushed as a `lo hi` pair (the same convention `d>f`/`f>d` use). Throws if the string isn't a valid number.
+- `number? ( c-addr len -- n true | lo hi true | false )` - Like `number`, but returns a false flag instead of throwing on an invalid string
 - `cr ( -- )` - Output carriage return and line feed
 - `space ( -- )` - Output one space
 - `spaces ( n -- )` - Output n spaces
@@ -286,6 +306,7 @@ All built-in words available in rForth, organized by category:
 - `cells ( n -- bytes )` - Convert cell count to byte count
 - `allot ( n -- )` - Allocate n bytes in heap
 - `here ( -- addr )` - Get current heap pointer
+- `pad ( -- addr )` - Address of the current task's scratch buffer (same buffer `<#`/`hold`/`#>` and interpreted `s"` use)
 - `variable ( "name" -- )` - Create a variable (allocates one cell)
 - `constant ( n "name" -- )` - Create a constant
 - `fvariable ( "name" -- )` - Create floating-point variable (when USE_FLOAT=1)

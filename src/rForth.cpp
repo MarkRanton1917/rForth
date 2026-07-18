@@ -2481,7 +2481,7 @@ static void see(Code* c)
 
 static void words()
 {
-  const int WIDTH = 32;
+  const int WIDTH = 16;
   int x = 0;
   std::string output;
   for (auto& w : dict) {

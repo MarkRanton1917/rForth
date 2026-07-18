@@ -7,6 +7,7 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <memory>
 
 #define DU0 0
 #define DU1 1
@@ -65,15 +66,26 @@ struct FV : public std::vector<T> {
 struct Code;
 typedef void (*XT)(Code*);
 
-struct Code {
+enum class CodeType {
+  WORD,
+  COMMENT,
+  TMP,
+  LIT,
+  FLIT,
+  VAR,
+  STR,
+  BRAN
+};
+
+struct Code : std::enable_shared_from_this<Code> {
   const static U32 IMMD_FLAG = 0x80000000;
   const static U32 COMPILE_ONLY_FLAG = 0x40000000;
   const char* name;
-  const char* desc;
+  const char* desc = "";
   XT xt;
-  FV<Code*> pf;
-  FV<Code*> p1;
-  FV<Code*> p2;
+  FV<std::shared_ptr<Code>> pf;
+  FV<std::shared_ptr<Code>> p1;
+  FV<std::shared_ptr<Code>> p2;
   FV<DU> q;
   union {
     U32 attr;
@@ -84,12 +96,18 @@ struct Code {
       U32 immd         :1;
     };
   };
+  CodeType code_type = CodeType::WORD;
+  size_t heap_mark = 0;
+  std::unique_ptr<char[]> name_buf;
+  std::unique_ptr<char[]> desc_buf;
   Code(const char* s, const char* d, XT fp, U32 a);
   Code(const std::string s, bool n = true);
   Code(XT fp);
-  ~Code();
   Code* append(Code* w);
+  Code* append(std::shared_ptr<Code> w);
   void exec();
+  void set_name(const std::string& s);
+  void set_desc(const std::string& s);
 };
 
 struct Comment : Code {
@@ -130,7 +148,7 @@ struct ForthContext {
 #if USE_FLOAT
   FV<DF> fs;
 #endif
-  const FV<Code*>* pf;
+  const FV<std::shared_ptr<Code>>* pf;
   size_t ip;
   FV<Code*> call_stack;
   Code* xt;

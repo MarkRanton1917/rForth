@@ -12,7 +12,7 @@ A lightweight, efficient **Forth interpreter** implementation designed for embed
 - **Word definitions** - Define custom words with `:` (colon) definitions
 - **Control structures** - `if/then`, `begin/until`, `begin/while/repeat`, `do/loop`, `do/+loop`
 - **Local variables** - `{: ... :}` named locals with `->` assignment, usable anywhere in a word body (including inside loops), with full recursion support
-- **Memory management** - Configurable heap size with dynamic memory allocation
+- **Memory management** - Configurable heap size with dynamic memory allocation; dictionary words are `std::shared_ptr`-owned, so `forget`/`boot` correctly free everything they remove — including recursive words and bodies shared across multiple `CREATE...DOES>` instances
 - **Case-sensitive or case-insensitive mode** - Compile-time configurable
 
 ### Advanced Features
@@ -31,7 +31,9 @@ rforth/
 │   └── rForth.cpp        # Implementation of Forth interpreter
 ├── forth/
 │   ├── memory.fs         # Forth utility library for memory operations
-│   └── task_test.fs      # Example task management in Forth
+│   └── tests/
+│       ├── task_test.fs      # Example task management in Forth
+│       └── stress_test.fs    # Regression test for dictionary/forget memory handling
 ├── examples/
 │   ├── esp32-usart.cpp   # ESP32 UART interface example
 │   └── linux.cpp         # Linux standalone example
@@ -264,7 +266,7 @@ All built-in words available in rForth, organized by category:
 - `\ ... ` - Single-line comment to end of line (immediate)
 - `.( string ) ` - Print string immediately (immediate)
 - `." string " ` - Print string at compile/execution time (immediate)
-- `s" string " ( -- addr len )` - Create string literal, returns address and length (immediate)
+- `s" string " ( -- addr len )` - Create string literal, returns address and length (immediate). Interpreted outside a colon definition, the buffer is transient (backed by the task's PAD, per ANS Forth convention) and only valid until the next PAD-consuming operation; compiled inside a word, its text is owned by the word and lives as long as the word does.
 - `abort" string " ` - Abort with message string (immediate)
 
 ### Number Output Formatting
@@ -522,9 +524,13 @@ Provides UART interface for interactive Forth console on ESP32.
 
 Standalone Forth interpreter for Linux systems.
 
-### forth/task_test.fs
+### forth/tests/task_test.fs
 
 Demonstrates task creation and management in Forth.
+
+### forth/tests/stress_test.fs
+
+Exercises `forget`/`boot` against `CREATE...DOES>` instances, repeated word redefinitions, recursion, and control structures — useful for checking under a memory checker (e.g. valgrind) that dictionary memory is fully reclaimed.
 
 ## System Integration
 

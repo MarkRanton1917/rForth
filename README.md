@@ -33,7 +33,8 @@ rforth/
 │   ├── memory.fs         # Forth utility library for memory operations
 │   └── tests/
 │       ├── task_test.fs      # Example task management in Forth
-│       └── stress_test.fs    # Regression test for dictionary/forget memory handling
+│       ├── stress_test.fs    # Regression test for dictionary/forget memory handling
+│       └── numbers_test.fs   # Example number parsing (single and double)
 ├── examples/
 │   ├── esp32-usart.cpp   # ESP32 UART interface example
 │   └── linux.cpp         # Linux standalone example
@@ -127,7 +128,7 @@ rForth supports named local variables declared with `{: ... :}`. Once declared, 
 ```
 
 - Names listed **before** `--` are popped off the data stack, left to right (the rightmost name gets the top of stack).
-- Names listed **after** `--` (or all names, if `--` is omitted) are plain local variables, initialized to `0`.
+- Names listed **after** `--` are plain local variables, initialized to `0`. If `--` is omitted entirely, every name is instead popped off the data stack (same as being listed before `--`).
 - `{: ... :}` — including its name list — must fit on a single source line, the same restriction as `."`, `s"` and `abort"`.
 - Writing to a local is always explicit, via `-> name`; reading it is just using its name like any other word.
 
@@ -200,8 +201,8 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `d>s ( lo hi -- n )` - Truncate a double to a single number (drops the high cell)
 - `d+ ( lo1 hi1 lo2 hi2 -- lo3 hi3 )` - Double addition
 - `d- ( lo1 hi1 lo2 hi2 -- lo3 hi3 )` - Double subtraction
-- `dnegate ( lo hi -- -lo -hi )` - Negate
-- `dabs ( lo hi -- |lo| |hi| )` - Absolute value
+- `dnegate ( lo hi -- lo' hi' )` - Negate the combined 64-bit double value
+- `dabs ( lo hi -- lo' hi' )` - Absolute value of the combined 64-bit double value
 - `dmax ( d1 d2 -- d )` - Maximum of two doubles
 - `dmin ( d1 d2 -- d )` - Minimum of two doubles
 - `d= ( d1 d2 -- flag )` - Equality
@@ -280,6 +281,7 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `.s ( -- )` - Print stack contents
 - `?  ( addr -- )` - Print cell at address
 - `bl ( -- 0x20 )` - Return space character code
+- `ascii ( "c" -- n )` - Parse the next word as a single character and push its ASCII code
 
 ### String and Comment Operations (compile-time)
 - `( ... ) ` - Multi-line comment (immediate)
@@ -288,6 +290,7 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `." string " ` - Print string at compile/execution time (immediate)
 - `s" string " ( -- addr len )` - Create string literal, returns address and length (immediate). Interpreted outside a colon definition, the buffer is transient (backed by the task's PAD, per ANS Forth convention) and only valid until the next PAD-consuming operation; compiled inside a word, its text is owned by the word and lives as long as the word does.
 - `abort" string " ` - Abort with message string (immediate)
+- `abort ( -- )` - Abort with the default "Aborted" message
 
 ### Number Output Formatting
 - `<# ( -- )` - Begin number formatting
@@ -345,7 +348,7 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `exit ( -- )` - Exit from current word
 
 ### Local Variables (compile-only)
-- `{: name1 name2 ... -- name3 name4 ... :}` - Declare local variables. Names before `--` are popped off the data stack (rightmost name gets top of stack); names after `--` (or all names, if `--` is omitted) are plain locals initialized to `0`. See [Local Variables](#local-variables) below for details.
+- `{: name1 name2 ... -- name3 name4 ... :}` - Declare local variables. Names before `--` are popped off the data stack (rightmost name gets top of stack); names after `--` are plain locals initialized to `0`. If `--` is omitted entirely, every name is popped off the data stack instead. See [Local Variables](#local-variables) below for details.
 - `-> name` - Pop the top of the data stack into the named local
 
 ### Timing and System
@@ -431,8 +434,8 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 #### Float Type Conversion
 - `s>f ( n -- f )` - Convert signed integer to float
 - `f>s ( f -- n )` - Convert float to signed integer
-- `d>f ( d_hi d_lo -- f )` - Convert double to float
-- `f>d ( f -- d_hi d_lo )` - Convert float to double
+- `d>f ( lo hi -- f )` - Convert double to float
+- `f>d ( f -- lo hi )` - Convert float to double
 
 #### Float Output
 - `f. ( f -- )` - Print float
@@ -468,6 +471,11 @@ IMMD("IMMD_NAME", {
 COMP("COMP_NAME", { 
   // implementation 
 })
+
+// Define an immediate, compile-only word (e.g. if/else/do/loop)
+ICOMP("ICOMP_NAME", { 
+  // implementation 
+})
 ```
 
 ## Architecture
@@ -499,7 +507,8 @@ rForth provides built-in words for task management:
 - **`task ( xt -- id )`** - Create a new task from execution token (xt), returns task ID
 - **`active? ( id -- flag )`** - Check if task with given ID is active (true/-1 or false/0)
 - **`pause ( -- )`** - Yield control to other tasks
-- **`kill ( id -- )`** - Terminate a task
+- **`resume ( id -- )`** - Resume a suspended task
+- **`stop ( -- )`** - Suspend/terminate the current task
 
 ### Multitasking Example
 
@@ -552,6 +561,10 @@ Demonstrates task creation and management in Forth.
 ### forth/tests/stress_test.fs
 
 Exercises `forget`/`boot` against `CREATE...DOES>` instances, repeated word redefinitions, recursion, and control structures — useful for checking under a memory checker (e.g. valgrind) that dictionary memory is fully reclaimed.
+
+### forth/tests/numbers_test.fs
+
+Reads a number from input and doubles it, exercising `accept`, `number?`, and both single- and double-number (`lo hi`) results.
 
 ## System Integration
 

@@ -739,13 +739,18 @@ static const Code rom[] = {
       DU v = ss_pop();
       forth_print([&](std::ostringstream& os) { os << std::setbase(BASE) << std::setw(w) << ABS(v); });
     }),
-  CODE("ascii",
+  IMMD("ascii",
     {
       std::string s = read_word();
-      if (s.length() == 1)
+      if (s.length() != 1) throw std::runtime_error("Invalid ASCII character");
+      if (compile) {
+        SYS_MUTEX_LOCK(forth_mutex);
+        last->append(std::make_shared<Lit>((DU)s[0]));
+        SYS_MUTEX_UNLOCK(forth_mutex);
+      }
+      else {
         ss_push((DU)s[0]);
-      else
-        throw std::runtime_error("Invalid ASCII character");
+      }
     }),
   CODE("key",
     {
@@ -2322,12 +2327,6 @@ static void unnest()
 
 void Code::exec()
 {
-  struct Frame {
-    const FV<std::shared_ptr<Code>>* pf;
-    size_t ip;
-    Code* word;
-  };
-
   ForthContext* ctx = current_ctx;
 
   if (interrupt_requested.exchange(false)) {
@@ -2347,8 +2346,6 @@ void Code::exec()
     ctx->call_stack.pop_back();
     return;
   }
-
-  FV<Frame> exec_stack;
 
   ctx->rs.push_back(WORD_MARKER_FRAME);
   ctx->rs.push_back((DU)ctx->pf);
@@ -2372,31 +2369,11 @@ void Code::exec()
       throw std::runtime_error(msg);
     }
 
-    while (ctx->pf == nullptr || ctx->ip >= ctx->pf->size()) {
-      if (exec_stack.empty()) goto done;
-
-      Frame& top = exec_stack.back();
-      if (!ctx->call_stack.empty() && ctx->call_stack.back() == top.word) ctx->call_stack.pop_back();
-
-      ctx->pf = top.pf;
-      ctx->ip = top.ip;
-      exec_stack.pop_back();
-    }
+    if (ctx->pf == nullptr || ctx->ip >= ctx->pf->size()) goto done;
 
     Code* w = (*ctx->pf)[ctx->ip++].get();
-
-    if (w->xt != nullptr) {
-      ctx->call_stack.push_back(w);
-      w->xt(w);
-      ctx->call_stack.pop_back();
-      if (ctx->rs.size() < rs_frame_start) goto done;
-    }
-    else {
-      exec_stack.push_back(Frame { ctx->pf, ctx->ip, w });
-      ctx->call_stack.push_back(w);
-      ctx->pf = &w->pf;
-      ctx->ip = 0;
-    }
+    w->exec();
+    if (ctx->rs.size() < rs_frame_start) goto done;
   }
 
 done:

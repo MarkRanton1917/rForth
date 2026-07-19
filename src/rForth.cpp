@@ -112,6 +112,12 @@ static void _local_fetch(Code* c);
 static void _local_store(Code* c);
 static size_t locals_base();
 static size_t rs_marker_pos();
+#if USE_FLOAT
+static void _locals_enter_f(Code* c);
+static void _local_fetch_f(Code* c);
+static void _local_store_f(Code* c);
+static size_t locals_base_f();
+#endif
 
 static FV<std::shared_ptr<Code>> dict;
 static uint8_t heap[HEAP_SIZE];
@@ -120,6 +126,9 @@ static int core_boundary = 0;
 static bool compile = false;
 static Code* last;
 static FV<Local> current_locals;
+#if USE_FLOAT
+static FV<Local> current_locals_f;
+#endif
 
 static std::istringstream fin;
 static void (*fout_cb)(int, const char*) = nullptr;
@@ -347,6 +356,62 @@ static const Code rom[] = {
       DU lo = ss_pop();
       ss_push(BOOL(pack_double(lo, hi) < 0));
     }),
+  CODE("d0>",
+    {
+      DU hi = ss_pop();
+      DU lo = ss_pop();
+      ss_push(BOOL(pack_double(lo, hi) > 0));
+    }),
+  CODE("d0<>",
+    {
+      DU hi = ss_pop();
+      DU lo = ss_pop();
+      ss_push(BOOL(pack_double(lo, hi) != 0));
+    }),
+  CODE("d0>=",
+    {
+      DU hi = ss_pop();
+      DU lo = ss_pop();
+      ss_push(BOOL(pack_double(lo, hi) >= 0));
+    }),
+  CODE("d0<=",
+    {
+      DU hi = ss_pop();
+      DU lo = ss_pop();
+      ss_push(BOOL(pack_double(lo, hi) <= 0));
+    }),
+  CODE("d>",
+    {
+      DU hi2 = ss_pop();
+      DU lo2 = ss_pop();
+      DU hi1 = ss_pop();
+      DU lo1 = ss_pop();
+      ss_push(BOOL(pack_double(lo1, hi1) > pack_double(lo2, hi2)));
+    }),
+  CODE("d<>",
+    {
+      DU hi2 = ss_pop();
+      DU lo2 = ss_pop();
+      DU hi1 = ss_pop();
+      DU lo1 = ss_pop();
+      ss_push(BOOL(pack_double(lo1, hi1) != pack_double(lo2, hi2)));
+    }),
+  CODE("d>=",
+    {
+      DU hi2 = ss_pop();
+      DU lo2 = ss_pop();
+      DU hi1 = ss_pop();
+      DU lo1 = ss_pop();
+      ss_push(BOOL(pack_double(lo1, hi1) >= pack_double(lo2, hi2)));
+    }),
+  CODE("d<=",
+    {
+      DU hi2 = ss_pop();
+      DU lo2 = ss_pop();
+      DU hi1 = ss_pop();
+      DU lo1 = ss_pop();
+      ss_push(BOOL(pack_double(lo1, hi1) <= pack_double(lo2, hi2)));
+    }),
   CODE("d.",
     {
       DU hi = ss_pop();
@@ -481,6 +546,21 @@ static const Code rom[] = {
       DU a = ss_pop();
       ss_push(BOOL(!GT(a, b)));
     }),
+  CODE("0<>",
+    {
+      DU a = ss_pop();
+      ss_push(BOOL(!ZEQ(a)));
+    }),
+  CODE("0>=",
+    {
+      DU a = ss_pop();
+      ss_push(BOOL(!LT(a, DU0)));
+    }),
+  CODE("0<=",
+    {
+      DU a = ss_pop();
+      ss_push(BOOL(!GT(a, DU0)));
+    }),
   CODE("u<",
     {
       DU b = ss_pop();
@@ -492,6 +572,30 @@ static const Code rom[] = {
       DU b = ss_pop();
       DU a = ss_pop();
       ss_push(BOOL(UINT(a) > UINT(b)));
+    }),
+  CODE("u<=",
+    {
+      DU b = ss_pop();
+      DU a = ss_pop();
+      ss_push(BOOL(UINT(a) <= UINT(b)));
+    }),
+  CODE("u>=",
+    {
+      DU b = ss_pop();
+      DU a = ss_pop();
+      ss_push(BOOL(UINT(a) >= UINT(b)));
+    }),
+  CODE("u=",
+    {
+      DU b = ss_pop();
+      DU a = ss_pop();
+      ss_push(BOOL(UINT(a) == UINT(b)));
+    }),
+  CODE("u<>",
+    {
+      DU b = ss_pop();
+      DU a = ss_pop();
+      ss_push(BOOL(UINT(a) != UINT(b)));
     }),
   CODE("dup",
     {
@@ -1006,6 +1110,9 @@ static const Code rom[] = {
     {
       SYS_MUTEX_LOCK(forth_mutex);
       current_locals.clear();
+#if USE_FLOAT
+      current_locals_f.clear();
+#endif
       dict_push(std::make_shared<Code>(read_word()));
       compile = true;
       SYS_MUTEX_UNLOCK(forth_mutex);
@@ -1015,6 +1122,9 @@ static const Code rom[] = {
       SYS_MUTEX_LOCK(forth_mutex);
       compile = false;
       current_locals.clear();
+#if USE_FLOAT
+      current_locals_f.clear();
+#endif
       Code* exit_word = find("exit");
       if (exit_word) last->append(exit_word);
       SYS_MUTEX_UNLOCK(forth_mutex);
@@ -1520,21 +1630,88 @@ static const Code rom[] = {
       DF a = fs_pop();
       fs_push(std::round(a));
     }),
-  CODE("f~abs",
+  CODE("f0=",
     {
-      DF eps = fs_pop();
-      DF b = fs_pop();
       DF a = fs_pop();
-      ss_push(std::fabs(a - b) <= eps ? -1 : 0);
+      ss_push(BOOL(a == 0.0f));
     }),
-  CODE("f~rel",
+  CODE("f0<",
     {
-      DF eps = fs_pop();
+      DF a = fs_pop();
+      ss_push(BOOL(a < 0.0f));
+    }),
+  CODE("f<",
+    {
       DF b = fs_pop();
       DF a = fs_pop();
-      DF scale = std::fmax(std::fabs(a), std::fabs(b));
-      if (scale == 0.0) scale = 1.0;
-      ss_push(std::fabs(a - b) / scale <= eps ? -1 : 0);
+      ss_push(BOOL(a < b));
+    }),
+  CODE("f0>",
+    {
+      DF a = fs_pop();
+      ss_push(BOOL(a > 0.0f));
+    }),
+  CODE("f0<>",
+    {
+      DF a = fs_pop();
+      ss_push(BOOL(a != 0.0f));
+    }),
+  CODE("f0>=",
+    {
+      DF a = fs_pop();
+      ss_push(BOOL(a >= 0.0f));
+    }),
+  CODE("f0<=",
+    {
+      DF a = fs_pop();
+      ss_push(BOOL(a <= 0.0f));
+    }),
+  CODE("f=",
+    {
+      DF b = fs_pop();
+      DF a = fs_pop();
+      ss_push(BOOL(a == b));
+    }),
+  CODE("f>",
+    {
+      DF b = fs_pop();
+      DF a = fs_pop();
+      ss_push(BOOL(a > b));
+    }),
+  CODE("f<>",
+    {
+      DF b = fs_pop();
+      DF a = fs_pop();
+      ss_push(BOOL(a != b));
+    }),
+  CODE("f>=",
+    {
+      DF b = fs_pop();
+      DF a = fs_pop();
+      ss_push(BOOL(a >= b));
+    }),
+  CODE("f<=",
+    {
+      DF b = fs_pop();
+      DF a = fs_pop();
+      ss_push(BOOL(a <= b));
+    }),
+  CODE("f~",
+    {
+      DF r3 = fs_pop();
+      DF r2 = fs_pop();
+      DF r1 = fs_pop();
+      bool flag;
+      if (r3 > 0.0f) {
+        flag = std::fabs(r1 - r2) < r3;
+      }
+      else if (r3 == 0.0f) {
+        flag = (r1 == r2);
+      }
+      else {
+        flag = std::fabs(r1 - r2) < std::fabs(r3) * (std::fabs(r1) + std::fabs(r2));
+      }
+      ss_push(BOOL(flag));
     }),
   CODE("s>f",
     {
@@ -1690,6 +1867,55 @@ static const Code rom[] = {
       last->append(std::make_shared<FLit>(val));
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
+  ICOMP("f{:",
+    {
+      std::string body = read_word("f:}");
+      std::istringstream iss(body);
+      SYS_MUTEX_LOCK(forth_mutex);
+      int slot_start = (int)current_locals_f.size();
+      int slot = slot_start;
+      int block_total = 0;
+      int from_stack = 0;
+      bool after_dash = false;
+      std::string s;
+      while (iss >> s) {
+        if (s == "--") {
+          after_dash = true;
+          continue;
+        }
+        current_locals_f.push_back({ s, slot });
+        slot++;
+        block_total++;
+        if (!after_dash) from_stack++;
+      }
+      auto c = std::make_shared<Code>(_locals_enter_f);
+      c->set_desc(body);
+      c->q.push((DU)block_total);
+      c->q.push((DU)from_stack);
+      c->q.push((DU)slot_start);
+      last->append(c);
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }),
+  ICOMP("f->",
+    {
+      std::string s = read_word();
+      SYS_MUTEX_LOCK(forth_mutex);
+      int slot = -1;
+      for (auto& d : current_locals_f)
+        if (d.name == s) {
+          slot = d.slot;
+          break;
+        }
+      if (slot < 0) {
+        SYS_MUTEX_UNLOCK(forth_mutex);
+        throw std::runtime_error("Unknown local '" + s + "'");
+      }
+      auto c = std::make_shared<Code>(_local_store_f);
+      c->set_desc(s);
+      c->q.push((DU)slot);
+      last->append(c);
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }),
 #endif
 };
 
@@ -1820,12 +2046,18 @@ int forth_interpret(std::string input, void (*output_hook)(int, const char*))
         current_ctx->ss.clear();
         current_ctx->rs.clear();
         current_ctx->ls.clear();
+#if USE_FLOAT
+        current_ctx->lfs.clear();
+#endif
         current_ctx->call_stack.clear();
         current_ctx->pf = nullptr;
         current_ctx->ip = 0;
         current_ctx->key_peek = INPUT_NONE;
         compile = false;
         current_locals.clear();
+#if USE_FLOAT
+        current_locals_f.clear();
+#endif
         getline(fin, idiom, '\n');
         abort_all_tasks();
         return;
@@ -2001,6 +2233,9 @@ static void abort_all_tasks()
   ctx0->ss.clear();
   ctx0->rs.clear();
   ctx0->ls.clear();
+#if USE_FLOAT
+  ctx0->lfs.clear();
+#endif
   ctx0->call_stack.clear();
   ctx0->pf = nullptr;
   ctx0->ip = 0;
@@ -2033,8 +2268,15 @@ static void unnest()
     if (!ctx->call_stack.empty()) ctx->call_stack.pop_back();
     return;
   }
+#if USE_FLOAT
+  while (ctx->rs.size() > marker_pos + 5)
+    ctx->rs.pop_back();
+  DU has_locals_f = ctx->rs.back();
+  ctx->rs.pop_back();
+#else
   while (ctx->rs.size() > marker_pos + 4)
     ctx->rs.pop_back();
+#endif
   DU has_locals = ctx->rs.back();
   ctx->rs.pop_back();
   ctx->ip = (size_t)ctx->rs.back();
@@ -2051,6 +2293,17 @@ static void unnest()
       }
     }
   }
+#if USE_FLOAT
+  if (has_locals_f) {
+    FV<DF>& lfs = ctx->lfs;
+    for (int i = (int)lfs.size() - 1; i >= 0; --i) {
+      if (lfs[i] == LOCALS_MARKER_FRAME_F) {
+        lfs.resize(i);
+        break;
+      }
+    }
+  }
+#endif
   if (!ctx->call_stack.empty()) ctx->call_stack.pop_back();
 }
 
@@ -2088,6 +2341,9 @@ void Code::exec()
   ctx->rs.push_back((DU)ctx->pf);
   ctx->rs.push_back((DU)ctx->ip);
   ctx->rs.push_back(0);
+#if USE_FLOAT
+  ctx->rs.push_back(0);
+#endif
   ctx->call_stack.push_back(this);
 
   ctx->pf = &pf;
@@ -2238,6 +2494,58 @@ static size_t locals_base()
   }
   throw std::runtime_error("No locals frame active");
 }
+
+#if USE_FLOAT
+static void _locals_enter_f(Code* c)
+{
+  int total = (int)c->q[0];
+  int from_stack = (int)c->q[1];
+  int slot_start = (int)c->q[2];
+
+  std::vector<DF> tmp(from_stack);
+  for (int i = from_stack - 1; i >= 0; --i)
+    tmp[i] = fs_pop();
+
+  size_t marker = rs_marker_pos();
+  if (current_ctx->rs[(int)(marker + 4)] == 0) {
+    current_ctx->lfs.push_back(LOCALS_MARKER_FRAME_F);
+    current_ctx->rs[(int)(marker + 4)] = 1;
+  }
+
+  size_t base = locals_base_f();
+  size_t need = base + (size_t)slot_start + (size_t)total;
+  if (current_ctx->lfs.size() < need) current_ctx->lfs.resize(need, (DF)0);
+
+  for (int i = 0; i < total; ++i) {
+    DF val = (i < from_stack) ? tmp[i] : (DF)0;
+    current_ctx->lfs[base + slot_start + i] = val;
+  }
+}
+
+static void _local_fetch_f(Code* c)
+{
+  size_t base = locals_base_f();
+  int slot = (int)c->q[0];
+  fs_push(current_ctx->lfs[(int)(base + (size_t)slot)]);
+}
+
+static void _local_store_f(Code* c)
+{
+  size_t base = locals_base_f();
+  int slot = (int)c->q[0];
+  DF v = fs_pop();
+  current_ctx->lfs[(int)(base + (size_t)slot)] = v;
+}
+
+static size_t locals_base_f()
+{
+  FV<DF>& lfs = current_ctx->lfs;
+  for (int i = (int)lfs.size() - 1; i >= 0; --i) {
+    if (lfs[i] == LOCALS_MARKER_FRAME_F) return (size_t)(i + 1);
+  }
+  throw std::runtime_error("No locals frame active");
+}
+#endif
 
 static void _tor(Code* c)
 {
@@ -2414,6 +2722,23 @@ static void _see(Code* c)
     forth_print([&](std::ostringstream& os) { os << "-> " << c->desc << " "; });
     return;
   }
+
+#if USE_FLOAT
+  if (c->xt == _locals_enter_f) {
+    forth_print([&](std::ostringstream& os) { os << "f{: " << c->desc << " f:} "; });
+    return;
+  }
+
+  if (c->xt == _local_fetch_f) {
+    forth_print([&](std::ostringstream& os) { os << c->desc << " "; });
+    return;
+  }
+
+  if (c->xt == _local_store_f) {
+    forth_print([&](std::ostringstream& os) { os << "f-> " << c->desc << " "; });
+    return;
+  }
+#endif
 
   const char* nm = c->name ? c->name : "";
   if (strcmp(nm, "if") == 0) {
@@ -2613,6 +2938,22 @@ static void forth_core(std::string idiom)
       SYS_MUTEX_UNLOCK(forth_mutex);
       return;
     }
+#if USE_FLOAT
+    for (auto& d : current_locals_f) {
+      if (d.name == idiom) {
+        slot = d.slot;
+        break;
+      }
+    }
+    if (slot >= 0) {
+      auto c = std::make_shared<Code>(_local_fetch_f);
+      c->set_desc(idiom);
+      c->q.push((DU)slot);
+      last->append(c);
+      SYS_MUTEX_UNLOCK(forth_mutex);
+      return;
+    }
+#endif
     SYS_MUTEX_UNLOCK(forth_mutex);
   }
 

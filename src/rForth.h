@@ -52,6 +52,7 @@ typedef int64_t DU;
 #endif
 #if USE_FLOAT
 typedef float DF;
+#define LOCALS_MARKER_FRAME_F ((DF)-1.0e30f)
 #endif
 
 template<typename T>
@@ -147,6 +148,7 @@ struct ForthContext {
   FV<DU> ls;
 #if USE_FLOAT
   FV<DF> fs;
+  FV<DF> lfs;
 #endif
   const FV<std::shared_ptr<Code>>* pf;
   size_t ip;

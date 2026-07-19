@@ -11,7 +11,7 @@ A lightweight, efficient **Forth interpreter** implementation designed for embed
 - **Interactive interpreter** - Read-Eval-Print Loop (REPL) for real-time code execution
 - **Word definitions** - Define custom words with `:` (colon) definitions
 - **Control structures** - `if/then`, `begin/until`, `begin/while/repeat`, `do/loop`, `do/+loop`
-- **Local variables** - `{: ... :}` named locals with `->` assignment, usable anywhere in a word body (including inside loops), with full recursion support
+- **Local variables** - `{: ... :}` named locals with `->` assignment, usable anywhere in a word body (including inside loops), with full recursion support; `f{: ... f:}` / `f->` provide the same for float locals when USE_FLOAT=1
 - **Memory management** - Configurable heap size with dynamic memory allocation; dictionary words are `std::shared_ptr`-owned, so `forget`/`boot` correctly free everything they remove — including recursive words and bodies shared across multiple `CREATE...DOES>` instances
 - **Case-sensitive or case-insensitive mode** - Compile-time configurable
 
@@ -179,6 +179,20 @@ Recursion is fully supported — every recursive call gets its own independent s
 - The name list of a `{: ... :}` block must be entirely on one source line.
 - A local declared inside only *one* branch of `if ... else ... then`, and then read after the branches merge (past `then`), is not supported — declare such locals either unconditionally (before the `if`) or symmetrically, with the same names in the same order, in both branches.
 
+### Float locals
+
+When USE_FLOAT=1, `f{: ... f:}` and `f-> name` give the float stack the same locals mechanism, kept in its own frame alongside the integer one:
+
+```forth
+: CIRCLE-AREA  f{: r -- area f:}
+  r r f* 3.14159 f* f-> area
+  area ;
+
+3.0 CIRCLE-AREA f.        \ 28.2743
+```
+
+Everything above — placement anywhere in a word, multiple blocks adding to the same frame, per-call isolation under recursion — applies identically to `f{: ... f:}`. Integer and float locals are tracked independently, so a word can freely mix `{: ... :}` and `f{: ... f:}`, and the same name may be reused for both an integer and a float local without conflict.
+
 ## Complete Word Reference
 
 All built-in words available in rForth, organized by category:
@@ -206,9 +220,17 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `dmax ( d1 d2 -- d )` - Maximum of two doubles
 - `dmin ( d1 d2 -- d )` - Minimum of two doubles
 - `d= ( d1 d2 -- flag )` - Equality
+- `d<> ( d1 d2 -- flag )` - Not equal
 - `d< ( d1 d2 -- flag )` - Less than (signed)
+- `d> ( d1 d2 -- flag )` - Greater than (signed)
+- `d<= ( d1 d2 -- flag )` - Less than or equal (signed)
+- `d>= ( d1 d2 -- flag )` - Greater than or equal (signed)
 - `d0= ( lo hi -- flag )` - Zero equal
+- `d0<> ( lo hi -- flag )` - Zero not equal
 - `d0< ( lo hi -- flag )` - Zero less (negative)
+- `d0> ( lo hi -- flag )` - Zero greater (positive)
+- `d0<= ( lo hi -- flag )` - Zero less or equal
+- `d0>= ( lo hi -- flag )` - Zero greater or equal
 - `d. ( lo hi -- )` - Print a double number in the current base
 
 ### Bitwise Operations
@@ -238,9 +260,16 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `>= ( n1 n2 -- flag )` - Greater than or equal
 - `u< ( u1 u2 -- flag )` - Unsigned less than
 - `u> ( u1 u2 -- flag )` - Unsigned greater than
+- `u<= ( u1 u2 -- flag )` - Unsigned less than or equal
+- `u>= ( u1 u2 -- flag )` - Unsigned greater than or equal
+- `u= ( u1 u2 -- flag )` - Unsigned equal
+- `u<> ( u1 u2 -- flag )` - Unsigned not equal
 - `0= ( n -- flag )` - Zero equal (n == 0)
 - `0< ( n -- flag )` - Zero less (n < 0)
 - `0> ( n -- flag )` - Zero greater (n > 0)
+- `0<> ( n -- flag )` - Zero not equal (n != 0)
+- `0<= ( n -- flag )` - Zero less or equal (n <= 0)
+- `0>= ( n -- flag )` - Zero greater or equal (n >= 0)
 
 ### Stack Manipulation
 - `dup ( x -- x x )` - Duplicate top of stack
@@ -385,8 +414,19 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 #### Comparison
 - `fmin ( f1 f2 -- f )` - Minimum of two floats
 - `fmax ( f1 f2 -- f )` - Maximum of two floats
-- `f~abs ( f1 f2 eps -- flag )` - Float equality with absolute tolerance
-- `f~rel ( f1 f2 eps -- flag )` - Float equality with relative tolerance
+- `f= ( f1 f2 -- flag )` - Equal
+- `f<> ( f1 f2 -- flag )` - Not equal
+- `f< ( f1 f2 -- flag )` - Less than
+- `f> ( f1 f2 -- flag )` - Greater than
+- `f<= ( f1 f2 -- flag )` - Less than or equal
+- `f>= ( f1 f2 -- flag )` - Greater than or equal
+- `f0= ( f -- flag )` - Zero equal (f == 0.0)
+- `f0< ( f -- flag )` - Zero less (f < 0.0)
+- `f0> ( f -- flag )` - Zero greater (f > 0.0)
+- `f0<> ( f -- flag )` - Zero not equal (f != 0.0)
+- `f0<= ( f -- flag )` - Zero less or equal (f <= 0.0)
+- `f0>= ( f -- flag )` - Zero greater or equal (f >= 0.0)
+- `f~ ( f1 f2 f3 -- flag )` - Approximate equality per the ANS Forth standard; the mode is chosen by the sign of `f3`: positive is an absolute tolerance (`|f1-f2| < f3`), zero requires exact equality, negative is a relative tolerance (`|f1-f2| < |f3| * (|f1|+|f2|)`)
 
 #### Trigonometric
 - `fsin ( f -- f )` - Sine (radians)
@@ -441,6 +481,10 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `f. ( f -- )` - Print float
 - `f.r ( f prec width -- )` - Print float with precision and width
 - `f.s ( -- )` - Print float stack contents
+
+#### Float Local Variables (compile-only)
+- `f{: name1 name2 ... -- name3 name4 ... f:}` - Declare float local variables. Works exactly like `{: ... :}` (see [Local Variables](#local-variables)) but pulls its inputs from the float stack instead of the data stack, and its own name list is delimited by `f{:` / `f:}`. Float and integer locals coexist freely in the same word and are looked up independently, so the same name can be used for both an integer and a float local without conflict.
+- `f-> name` - Pop the top of the float stack into the named float local
 
 ### File Operations
 - `included ( addr len -- )` - Load and execute Forth file

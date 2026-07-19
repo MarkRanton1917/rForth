@@ -1372,7 +1372,12 @@ static const Code rom[] = {
   CODE("delay",
     {
       DU ms = ss_pop();
-      if (ms > 0) SYS_SLEEP_MS(ms);
+      while (ms > 0) {
+        DU step = ms > 10 ? 10 : ms;
+        SYS_SLEEP_MS(step);
+        ms -= step;
+        if (interrupt_requested.exchange(false)) throw std::runtime_error("User interrupt");
+      }
     }),
   CODE("stop",
     {

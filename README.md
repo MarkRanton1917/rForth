@@ -327,6 +327,7 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `#s ( n -- 0 )` - Format remaining digits
 - `#> ( n -- addr len )` - End formatting, return address and length
 - `hold ( c -- )` - Add character to formatted number
+- `sign ( n -- )` - Add a `-` to the formatted number if `n` is negative (no effect otherwise)
 
 ### Memory and Variables
 - `@ ( addr -- val )` - Fetch cell from address

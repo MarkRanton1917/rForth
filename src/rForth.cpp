@@ -1003,6 +1003,14 @@ static const Code rom[] = {
       if (current_ctx->pad_ptr == 0) throw std::runtime_error("PAD overflow");
       current_ctx->pad[--current_ctx->pad_ptr] = ch;
     }),
+  CODE("sign",
+    {
+      DU n = ss_pop();
+      if (n < 0) {
+        if (current_ctx->pad_ptr == 0) throw std::runtime_error("PAD overflow");
+        current_ctx->pad[--current_ctx->pad_ptr] = '-';
+      }
+    }),
   ICOMP("if",
     {
       SYS_MUTEX_LOCK(forth_mutex);

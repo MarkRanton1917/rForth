@@ -761,8 +761,13 @@ static const Code rom[] = {
         current_ctx->key_peek = INPUT_NONE;
       }
       else {
-        while ((input = fin_cb()) == INPUT_NONE)
+        while ((input = fin_cb()) == INPUT_NONE) {
+          if (interrupt_requested.exchange(false)) {
+            waiting_input = false;
+            throw std::runtime_error("User interrupt");
+          }
           SYS_SLEEP_MS(10);
+        }
       }
       waiting_input = false;
       if (input == INPUT_BREAK) throw std::runtime_error("User interrupt");
@@ -794,8 +799,13 @@ static const Code rom[] = {
           current_ctx->key_peek = INPUT_NONE;
         }
         else {
-          while ((input = fin_cb()) == INPUT_NONE)
+          while ((input = fin_cb()) == INPUT_NONE) {
+            if (interrupt_requested.exchange(false)) {
+              waiting_input = false;
+              throw std::runtime_error("User interrupt");
+            }
             SYS_SLEEP_MS(10);
+          }
         }
         waiting_input = false;
         if (input == INPUT_BREAK) throw std::runtime_error("User interrupt");

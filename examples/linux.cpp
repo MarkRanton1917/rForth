@@ -78,11 +78,13 @@ static void handle_sigint(int)
 {
   g_sigint_flag = 1;
   // If a Forth word is blocked in KEY/ACCEPT, raw_getc_interruptible() alone
-  // will notice g_sigint_flag and make it throw "User interrupt" itself.
-  // Also arming the core's own interrupt_requested flag in that case would
-  // leave it unconsumed (nothing checks it while blocked on input), so it
-  // would fire a second time on whatever word runs next. Only forward to
-  // the core when nothing is already about to consume this interrupt.
+  // will notice g_sigint_flag and make it throw "User interrupt" itself -
+  // read_char() only calls it once fin_cb() is already blocked inside that
+  // read(), so the core's own interrupt_requested check in KEY/ACCEPT (which
+  // only runs between polls) never gets a chance to observe or consume it.
+  // Arming interrupt_requested here as well would leave it set, so it would
+  // fire a second time on whatever word runs next. Only forward to the core
+  // when nothing is already about to consume this interrupt.
   if (!forth_waiting_input()) forth_request_interrupt();
 }
 

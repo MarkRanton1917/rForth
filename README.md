@@ -399,9 +399,11 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `begin ... until` - Loop until condition true
 - `begin ... while ... repeat` - While loop
 - `begin ... again` - Infinite loop
-- `do ... loop` - Fixed count loop (i = index)
+- `do ... loop` - Fixed count loop (i = index); always runs at least once, even if the start index equals the limit
 - `do ... +loop` - Fixed count loop with variable step
-- `i ( -- n )` - Get current loop index
+- `?do ... loop` / `?do ... +loop` - Same as `do`/`+loop`, but skipped entirely (zero iterations) when the start index equals the limit
+- `i ( -- n )` - Get current (innermost) loop index
+- `j ( -- n )` - Get the next-enclosing loop's index, from inside a nested `do ... loop`
 - `leave ( -- )` - Exit loop immediately
 - `exit ( -- )` - Exit from current word
 
@@ -431,8 +433,6 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `f* ( f1 f2 -- f )` - Float multiplication
 - `f/ ( f1 f2 -- f )` - Float division
 - `f** ( f1 f2 -- f )` - Float exponentiation (power)
-- `f2* ( f -- f )` - Multiply by 2.0
-- `f2/ ( f -- f )` - Divide by 2.0
 - `1/f ( f -- f )` - Reciprocal (1/f)
 
 #### Unary Functions

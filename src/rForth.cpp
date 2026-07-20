@@ -1104,7 +1104,18 @@ static const Code rom[] = {
       dict_push(std::make_shared<Tmp>());
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
+  ICOMP("?do",
+    {
+      SYS_MUTEX_LOCK(forth_mutex);
+      last->append(std::make_shared<Bran>(_tor2));
+      auto ph = std::make_shared<Bran>(nullptr);
+      ph->q.push(1);
+      last->append(ph);
+      dict_push(std::make_shared<Tmp>());
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }),
   CODE("i", ss_push(current_ctx->rs[-1])),
+  CODE("j", ss_push(current_ctx->rs[-3])),
   COMP("leave", { throw 0; }),
   ICOMP("loop",
     {
@@ -1513,16 +1524,6 @@ static const Code rom[] = {
       DF b = fs_pop();
       DF a = fs_pop();
       fs_push(a / b);
-    }),
-  CODE("f2*",
-    {
-      DF a = fs_pop();
-      fs_push(a * 2.0);
-    }),
-  CODE("f2/",
-    {
-      DF a = fs_pop();
-      fs_push(a * 0.5);
     }),
   CODE("1/f",
     {
@@ -2588,6 +2589,11 @@ static void _begin(Code* c)
 
 static void _loop(Code* c)
 {
+  if (!c->q.empty() && c->q[0] && current_ctx->rs[-1] == current_ctx->rs[-2]) {
+    current_ctx->rs.pop();
+    current_ctx->rs.pop();
+    return;
+  }
   try {
     while (true) {
       for (auto& w : c->pf)
@@ -2613,6 +2619,11 @@ static void _loop(Code* c)
 
 static void _plus_loop(Code* c)
 {
+  if (!c->q.empty() && c->q[0] && current_ctx->rs[-1] == current_ctx->rs[-2]) {
+    current_ctx->rs.pop();
+    current_ctx->rs.pop();
+    return;
+  }
   try {
     while (true) {
       for (auto& w : c->pf)

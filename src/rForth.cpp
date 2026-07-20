@@ -1959,7 +1959,7 @@ DF fs_pop()
 }
 #endif
 
-void dict_add(const Code* words, size_t size)
+void forth_dict_add(const Code* words, size_t size)
 {
   dict.reserve(size * 2);
   for (int i = 0; i < size; ++i)

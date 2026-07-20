@@ -167,19 +167,21 @@ struct Local {
   int slot;
 };
 
+// api
 void forth_init();
 int forth_interpret(std::string input, void (*output_hook)(int, const char*));
 int forth_vm(int (*input_hook)(), void (*output_hook)(int, const char*));
 bool forth_waiting_input();
 void forth_request_interrupt();
-void dict_add(const Code* words, size_t size);
+void forth_dict_add(const Code* words, size_t size);
+
 void ss_push(DU n);
 DU ss_pop();
-DU alloc_heap(const uint8_t* val, size_t size);
 #if USE_FLOAT
 void fs_push(DF n);
 DF fs_pop();
 #endif
+DU alloc_heap(const uint8_t* val, size_t size);
 
 // to implement
 void mem_stat();

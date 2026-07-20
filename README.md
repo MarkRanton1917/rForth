@@ -87,6 +87,34 @@ typedef float DF;        // Floating-point number (when USE_FLOAT=1)
 typedef uintptr_t UFP;   // Function pointer type
 ```
 
+## Embedding API (C++)
+
+Everything below is declared in `rForth.h` under `// api` (implemented by the library) and `// to implement` (implemented by the host application). A typical embedder:
+
+1. Calls `forth_init()` once.
+2. Optionally calls `forth_dict_add()` to register application-specific words (see `main/main.cpp` in a consuming project for an example: sound and graphics words).
+3. Feeds source text in either one of two ways (see below), passing an output callback that receives everything the interpreter prints.
+4. Implements `mem_stat()` and `forth_include()`, the two platform hooks the library calls into but does not define itself.
+
+### Core functions
+
+- **`void forth_init()`** - Initializes the dictionary from the built-in word table, creates the default task context, and resets the heap and numeric base. Must be called exactly once before anything else.
+- **`int forth_interpret(std::string input, void (*output_hook)(int, const char*))`** - Interprets a complete chunk of source (may contain multiple `\n`-separated lines; each line gets its own parse pass, so constructs like `s"`/`{: :}` must not span a line break). `output_hook` is invoked with `(length, text)` for every piece of output — printed values, `ok`/`compiled` status, and error/backtrace messages. Always returns `0`; failures are reported through an error message via `output_hook`, not the return value.
+- **`int forth_vm(int (*input_hook)(), void (*output_hook)(int, const char*))`** - Character-oriented, non-blocking front end for interactive input. Each call pulls **one** character from `input_hook()` (which should return `INPUT_NONE` when nothing is available yet — never block), buffers it, and once the buffered line ends in a newline, hands it to `forth_interpret()` internally. Returns `-1` while still buffering a line, or the result of `forth_interpret()` (`0`) once a line was processed. Intended to be polled repeatedly from a task/loop, one call per available character.
+- **`bool forth_waiting_input()`** - Returns whether the interpreter is currently parked in a blocking input word (`key`, `accept`). Use it to decide whether the next character from your input source should be routed to satisfy that pending read rather than treated as ordinary REPL input.
+- **`void forth_request_interrupt()`** - Requests that the interpreter abort with a `"User interrupt"` error at its next opportunity (checked at the top of every word's `exec()` and at the top of every loop iteration). Use this to implement a break/Ctrl-C key.
+- **`void forth_dict_add(const Code* words, size_t size)`** - Appends an array of host-defined `Code` entries (built with the `CODE`/`IMMD`/`COMP`/`ICOMP` macros, see [Macros for Defining Words](#macros-for-defining-words)) to the dictionary, so Forth code can call them like any built-in word. `words` must outlive the interpreter — the dictionary stores unowned references to it (`forth_init()`'s own `rom[]` table is `std::shared_ptr`-owned instead, since it can be `forget`-ten; a `forth_dict_add()` table cannot).
+- **`void ss_push(DU n)` / `DU ss_pop()`** - Push/pop the integer data stack. Use these from inside a `CODE(...)` callback to read arguments and leave results, exactly as the built-in words do.
+- **`void fs_push(DF n)` / `DF fs_pop()`** *(when `USE_FLOAT=1`)* - Push/pop the float stack, the floating-point counterpart to `ss_push`/`ss_pop`.
+- **`DU alloc_heap(const uint8_t* val, size_t size)`** - Copies `size` bytes from `val` into the Forth heap and returns the resulting address as a `DU`, advancing the heap pointer (throws `"Heap overflow"` if the heap is exhausted). This is what `create`/`variable`/`constant` use internally; call it directly if a custom word needs to allocate heap-backed storage.
+
+### Host-provided hooks
+
+The library calls these two functions but does not define them — the final link will fail until the embedder provides both (see `examples/linux.cpp` for a reference implementation of both).
+
+- **`void mem_stat()`** - Called by the built-in `mstat` word. Should print (via whatever output mechanism the host wired up) a snapshot of available memory — e.g. free heap on ESP32, or `sysinfo()` free RAM on Linux.
+- **`bool forth_include(const char* fn)`** - Called by the built-in `included` word (`included ( addr len -- )`) to load and run a file by name: open `fn`, feed it to `forth_interpret()` (typically line by line, mirroring how the top-level REPL splits input), and return `true` on success or `false` if the file couldn't be opened. `false` causes `included` to throw `"Can't open file"`.
+
 ## Usage Example
 
 ### Interactive Session

@@ -144,6 +144,15 @@ static std::atomic<bool> abort_requested { false };
 static std::string abort_message;
 static ForthContext* abort_ctx = nullptr;
 
+struct ForthThrown : std::runtime_error {
+  DU code;
+  explicit ForthThrown(DU c)
+    : std::runtime_error("Uncaught throw " + std::to_string(c)),
+      code(c)
+  {
+  }
+};
+
 static inline void dict_push(std::shared_ptr<Code> c)
 {
   last = c.get();
@@ -1239,6 +1248,39 @@ static const Code rom[] = {
       Code* w = reinterpret_cast<Code*>(ss_pop());
       w->exec();
     }),
+  CODE("throw",
+    {
+      DU n = ss_pop();
+      if (n != 0) throw ForthThrown(n);
+    }),
+  CODE("catch",
+    {
+      Code* w = reinterpret_cast<Code*>(ss_pop());
+      ForthContext* ctx = current_ctx;
+      size_t ss_depth = ctx->ss.size();
+      size_t rs_depth = ctx->rs.size();
+      size_t ls_depth = ctx->ls.size();
+      size_t call_depth = ctx->call_stack.size();
+#if USE_FLOAT
+      size_t fs_depth = ctx->fs.size();
+      size_t lfs_depth = ctx->lfs.size();
+#endif
+      try {
+        w->exec();
+        ss_push(0);
+      }
+      catch (ForthThrown& t) {
+        ctx->ss.resize(ss_depth);
+        ctx->rs.resize(rs_depth);
+        ctx->ls.resize(ls_depth);
+        ctx->call_stack.resize(call_depth);
+#if USE_FLOAT
+        ctx->fs.resize(fs_depth);
+        ctx->lfs.resize(lfs_depth);
+#endif
+        ss_push(t.code);
+      }
+    }),
   CODE("create",
     {
       SYS_MUTEX_LOCK(forth_mutex);
@@ -1369,7 +1411,6 @@ static const Code rom[] = {
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   CODE("depth", ss_push(current_ctx->ss.size())),
-  CODE("mstat", mem_stat()),
   CODE("ms", ss_push(MILLIS())),
   CODE("rnd", ss_push(RND())),
   CODE("included",
@@ -1378,6 +1419,133 @@ static const Code rom[] = {
       (void)len;
       const char* filename = reinterpret_cast<const char*>(static_cast<uintptr_t>(ss_pop()));
       load(filename);
+    }),
+  CODE("r/o", ss_push(FAM_RO)),
+  CODE("w/o", ss_push(FAM_WO)),
+  CODE("r/w", ss_push(FAM_RW)),
+  CODE("open-file",
+    {
+      DU fam = ss_pop();
+      ss_pop();
+      const char* addr = reinterpret_cast<const char*>(ss_pop());
+      ForthFile* f = forth_file_open(addr, (int)fam, false);
+      ss_push(reinterpret_cast<DU>(f));
+      ss_push(f ? 0 : -1);
+    }),
+  CODE("create-file",
+    {
+      DU fam = ss_pop();
+      ss_pop();
+      const char* addr = reinterpret_cast<const char*>(ss_pop());
+      ForthFile* f = forth_file_open(addr, (int)fam, true);
+      ss_push(reinterpret_cast<DU>(f));
+      ss_push(f ? 0 : -1);
+    }),
+  CODE("close-file",
+    {
+      ForthFile* f = reinterpret_cast<ForthFile*>(ss_pop());
+      if (!f) {
+        ss_push(-1);
+        return;
+      }
+      f->close();
+      delete f;
+      ss_push(0);
+    }),
+  CODE("read-file",
+    {
+      ForthFile* f = reinterpret_cast<ForthFile*>(ss_pop());
+      DU len = ss_pop();
+      char* addr = reinterpret_cast<char*>(ss_pop());
+      if (!f) {
+        ss_push(0);
+        ss_push(-1);
+        return;
+      }
+      long n = f->read(addr, len);
+      ss_push(n < 0 ? 0 : n);
+      ss_push(n < 0 ? -1 : 0);
+    }),
+  CODE("write-file",
+    {
+      ForthFile* f = reinterpret_cast<ForthFile*>(ss_pop());
+      DU len = ss_pop();
+      const char* addr = reinterpret_cast<const char*>(ss_pop());
+      if (!f) {
+        ss_push(-1);
+        return;
+      }
+      long n = f->write(addr, len);
+      ss_push(n == len ? 0 : -1);
+    }),
+  CODE("read-line",
+    {
+      ForthFile* f = reinterpret_cast<ForthFile*>(ss_pop());
+      DU len = ss_pop();
+      char* addr = reinterpret_cast<char*>(ss_pop());
+      if (!f) {
+        ss_push(0);
+        ss_push(BOOL(false));
+        ss_push(-1);
+        return;
+      }
+      long n = f->read_line(addr, len);
+      ss_push(n < 0 ? 0 : n);
+      ss_push(BOOL(n >= 0));
+      ss_push(0);
+    }),
+  CODE("write-line",
+    {
+      ForthFile* f = reinterpret_cast<ForthFile*>(ss_pop());
+      DU len = ss_pop();
+      const char* addr = reinterpret_cast<const char*>(ss_pop());
+      if (!f) {
+        ss_push(-1);
+        return;
+      }
+      long n = f->write(addr, len);
+      if (n == len) n = f->write("\n", 1);
+      ss_push(n < 0 ? -1 : 0);
+    }),
+  CODE("file-position",
+    {
+      ForthFile* f = reinterpret_cast<ForthFile*>(ss_pop());
+      if (!f) {
+        ss_push(0);
+        ss_push(-1);
+        return;
+      }
+      long p = f->position();
+      ss_push(p < 0 ? 0 : p);
+      ss_push(p < 0 ? -1 : 0);
+    }),
+  CODE("reposition-file",
+    {
+      ForthFile* f = reinterpret_cast<ForthFile*>(ss_pop());
+      DU pos = ss_pop();
+      if (!f) {
+        ss_push(-1);
+        return;
+      }
+      ss_push(f->seek(pos) ? 0 : -1);
+    }),
+  CODE("file-size",
+    {
+      ForthFile* f = reinterpret_cast<ForthFile*>(ss_pop());
+      if (!f) {
+        ss_push(0);
+        ss_push(-1);
+        return;
+      }
+      long s = f->size();
+      ss_push(s < 0 ? 0 : s);
+      ss_push(s < 0 ? -1 : 0);
+    }),
+  CODE("delete-file",
+    {
+      ss_pop();
+      const char* addr = reinterpret_cast<const char*>(ss_pop());
+      ss_push(forth_file_delete(addr) ? 0 : -1);
     }),
   CODE("forget",
     {
@@ -2842,7 +3010,18 @@ static void load(const char* fn)
   void (*cb)(int, const char*) = fout_cb;
   std::string in;
   getline(fin, in);
-  if (!forth_include(fn)) throw std::runtime_error("Can't open file");
+
+  ForthFile* f = forth_file_open(fn, FAM_RO, false);
+  if (!f) throw std::runtime_error("Can't open file");
+  char line[256];
+  long n;
+  while ((n = f->read_line(line, sizeof(line) - 1)) >= 0) {
+    line[n] = '\0';
+    forth_interpret(line, nullptr);
+  }
+  f->close();
+  delete f;
+
   fout_cb = cb;
   fin.clear();
   fin.str(in);

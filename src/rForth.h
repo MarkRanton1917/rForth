@@ -183,6 +183,26 @@ DF fs_pop();
 #endif
 DU alloc_heap(const uint8_t* val, size_t size);
 
-// to implement
-void mem_stat();
-bool forth_include(const char* fn);
+enum ForthFileMode {
+  FAM_RO = 0,
+  FAM_WO = 1,
+  FAM_RW = 2
+};
+
+// implement and derive your file operations from this class
+class ForthFile {
+public:
+  virtual ~ForthFile() = default;
+  virtual void close() = 0;
+  virtual long read(char* buf, long len) = 0; // bytes read; 0 = EOF; -1 = error
+  virtual long write(const char* buf, long len) = 0; // bytes written; -1 = error
+  virtual long read_line(char* buf, long max_len) = 0; // bytes read (excl. '\n'); -1 = EOF
+  virtual bool seek(long pos) = 0;
+  virtual long position() = 0; // -1 = error
+  virtual long size() = 0; // -1 = error
+};
+
+// to implement — factory: open path with the host's native API and return a
+// heap-allocated ForthFile subclass, or nullptr on failure.
+ForthFile* forth_file_open(const char* path, int fam, bool create);
+bool forth_file_delete(const char* path);

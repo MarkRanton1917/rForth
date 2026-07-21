@@ -18,7 +18,9 @@
 #include <csignal>
 #include <cerrno>
 
-void mem_stat()
+// Not part of the library - a plain app-defined function, registered below as
+// the "greet" word to demonstrate forth_dict_add().
+void greet()
 {
   struct sysinfo info;
   if (sysinfo(&info) == 0) {
@@ -32,24 +34,76 @@ void mem_stat()
   }
 }
 
-bool forth_include(const char* fname)
+static const Code words[] = {
+  CODE("greet", greet()),
+};
+
+// Host-side implementation of rForth.h's ForthFile interface, backing the
+// library's file-access words (open-file, read-line, etc.) with plain stdio.
+class PosixForthFile : public ForthFile {
+  FILE* fp;
+
+public:
+  explicit PosixForthFile(FILE* f)
+    : fp(f)
+  {
+  }
+  void close() override
+  {
+    fclose(fp);
+  }
+  long read(char* buf, long len) override
+  {
+    return (long)fread(buf, 1, len, fp);
+  }
+  long write(const char* buf, long len) override
+  {
+    return (long)fwrite(buf, 1, len, fp);
+  }
+  long read_line(char* buf, long max_len) override
+  {
+    if (!fgets(buf, max_len, fp)) return -1;
+    long n = (long)strlen(buf);
+    if (n > 0 && buf[n - 1] == '\n') buf[--n] = '\0';
+    return n;
+  }
+  bool seek(long pos) override
+  {
+    return fseek(fp, pos, SEEK_SET) == 0;
+  }
+  long position() override
+  {
+    return ftell(fp);
+  }
+  long size() override
+  {
+    long cur = ftell(fp);
+    fseek(fp, 0, SEEK_END);
+    long end = ftell(fp);
+    fseek(fp, cur, SEEK_SET);
+    return end;
+  }
+};
+
+// create=true (CREATE-FILE) truncates; create=false (OPEN-FILE) requires the
+// file to already exist, so w/o|r/w both map to "r+" to avoid truncating it.
+static const char* fam_mode(int fam, bool create)
 {
-  auto dumb = [](int, const char*) {};
+  if (create) return fam == FAM_WO ? "w" : "w+";
+  return fam == FAM_RO ? "r" : "r+";
+}
 
-  FILE* file = fopen(fname, "r");
-  if (!file) {
-    return false;
-  }
+// The two hooks rForth.h declares under "to implement" for file access -
+// the library calls these, never touching stdio itself.
+ForthFile* forth_file_open(const char* path, int fam, bool create)
+{
+  FILE* fp = fopen(path, fam_mode(fam, create));
+  return fp ? new PosixForthFile(fp) : nullptr;
+}
 
-  char line[256];
-  while (fgets(line, sizeof(line), file)) {
-    size_t len = strlen(line);
-    if (len > 0 && line[len - 1] == '\n') line[len - 1] = '\0';
-    forth_interpret(line, dumb);
-  }
-
-  fclose(file);
-  return true;
+bool forth_file_delete(const char* path)
+{
+  return remove(path) == 0;
 }
 
 static struct termios orig_termios;
@@ -452,7 +506,8 @@ static int read_char()
 int main()
 {
   forth_init();
-  mem_stat();
+  forth_dict_add(words, sizeof(words) / sizeof(Code));
+  greet();
   enable_raw_terminal();
 
   // signal() installs SA_RESTART on Linux, which would make an interrupted

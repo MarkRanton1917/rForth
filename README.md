@@ -19,7 +19,7 @@ A lightweight, efficient **Forth interpreter** implementation designed for embed
 - **Floating-point support** - Optional float type (DF) for mathematical operations
 - **Cooperative multitasking** - Full support on FreeRTOS (ESP32) and pthreads (Linux)
 - **Embedded scripting** - Easy integration as a component in larger projects
-- **Cross-platform** - Runs on both ESP32 (with FreeRTOS) and Linux; porting to other platforms is straightforward through platform-specific implementations of `mem_stat()` and `forth_include()` functions with FreeRTOS abstraction layer support
+- **Cross-platform** - Runs on both ESP32 (with FreeRTOS) and Linux; porting to other platforms is straightforward through a platform-specific implementation of the `ForthFile`-based file hooks (`forth_file_open()`/`forth_file_delete()`), with FreeRTOS abstraction layer support
 - **gForth-compatible output format** - Output formatting and stack display follow gForth conventions for consistency with standard Forth systems
 
 ## Project Structure
@@ -34,7 +34,8 @@ rforth/
 │   └── tests/
 │       ├── task_test.fs      # Example task management in Forth
 │       ├── stress_test.fs    # Regression test for dictionary/forget memory handling
-│       └── numbers_test.fs   # Example number parsing (single and double)
+│       ├── numbers_test.fs   # Example number parsing (single and double)
+│       └── file_test.fs      # Exercises the file-access word set end-to-end
 ├── examples/
 │   ├── esp32-usart.cpp   # ESP32 UART interface example
 │   └── linux.cpp         # Linux standalone example
@@ -94,7 +95,7 @@ Everything below is declared in `rForth.h` under `// api` (implemented by the li
 1. Calls `forth_init()` once.
 2. Optionally calls `forth_dict_add()` to register application-specific words (see `main/main.cpp` in a consuming project for an example: sound and graphics words).
 3. Feeds source text in either one of two ways (see below), passing an output callback that receives everything the interpreter prints.
-4. Implements `mem_stat()` and `forth_include()`, the two platform hooks the library calls into but does not define itself.
+4. Implements `forth_file_open()` and `forth_file_delete()`, the platform hooks the library calls into but does not define itself.
 
 ### Core functions
 
@@ -110,10 +111,30 @@ Everything below is declared in `rForth.h` under `// api` (implemented by the li
 
 ### Host-provided hooks
 
-The library calls these two functions but does not define them — the final link will fail until the embedder provides both (see `examples/linux.cpp` for a reference implementation of both).
+The library calls these functions but does not define them — the final link will fail until the embedder provides both (see `examples/linux.cpp` for a reference implementation of both).
 
-- **`void mem_stat()`** - Called by the built-in `mstat` word. Should print (via whatever output mechanism the host wired up) a snapshot of available memory — e.g. free heap on ESP32, or `sysinfo()` free RAM on Linux.
-- **`bool forth_include(const char* fn)`** - Called by the built-in `included` word (`included ( addr len -- )`) to load and run a file by name: open `fn`, feed it to `forth_interpret()` (typically line by line, mirroring how the top-level REPL splits input), and return `true` on success or `false` if the file couldn't be opened. `false` causes `included` to throw `"Can't open file"`.
+- **`ForthFile* forth_file_open(const char* path, int fam, bool create)`** - Called by every file-access word (`open-file`, `create-file`, and internally by `included`) to open `path` with the host's native filesystem API. `fam` is one of `FAM_RO`/`FAM_WO`/`FAM_RW` (see `r/o`/`w/o`/`r/w`); `create` is `true` for `create-file` (create/truncate) and `false` for `open-file` (must already exist). Return a heap-allocated subclass of `ForthFile`, or `nullptr` on failure.
+- **`bool forth_file_delete(const char* path)`** - Called by `delete-file`. Return `true` on success.
+
+### `ForthFile`
+
+Host applications derive a subclass of the abstract `ForthFile` class (declared in `rForth.h`) to plug their native filesystem (SD, LittleFS, POSIX, …) into the file-access words:
+
+```cpp
+class ForthFile {
+public:
+  virtual ~ForthFile() = default;
+  virtual void close() = 0;
+  virtual long read(char* buf, long len) = 0;          // bytes read; 0 = EOF; -1 = error
+  virtual long write(const char* buf, long len) = 0;    // bytes written; -1 = error
+  virtual long read_line(char* buf, long max_len) = 0;  // bytes read (excl. '\n'); -1 = EOF
+  virtual bool seek(long pos) = 0;
+  virtual long position() = 0;                          // -1 = error
+  virtual long size() = 0;                              // -1 = error
+};
+```
+
+See `examples/linux.cpp` and `examples/esp32-usart.cpp` (`PosixForthFile`, POSIX `FILE*`-backed) and `main/main.cpp` in a consuming project (`SdForthFile`, Arduino `SD`/`File`-backed) for reference implementations.
 
 ## Usage Example
 
@@ -379,6 +400,8 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `] ( -- )` - Switch to compilation mode
 - `immediate ( -- )` - Make last word immediate
 - `execute ( xt -- )` - Execute word at execution token
+- `throw ( n -- )` - If `n` is nonzero, raise it as a Forth exception, unwinding to the nearest enclosing `catch` (or aborting the current input line if none is active). No effect if `n` is zero
+- `catch ( i*x xt -- j*x 0 | i*x n )` - Execute `xt`; if it completes normally, push `0`. If it (or anything it calls) executes `throw` with a nonzero code, restore the stacks to their depth at the time `catch` began and push that code instead. Does **not** catch `abort`/`abort"` or other internal fatal errors — those still abort the line unconditionally
 - `' name ( -- xt )` - Get execution token of word
 - `['] name ( -- xt )` - Get execution token at compile time
 - `create ( "name" -- )` - Create a named data structure
@@ -416,7 +439,6 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `delay ( ms -- )` - Sleep for milliseconds
 - `pause ( -- )` - Yield control to scheduler
 - `rnd ( -- n )` - Get random number
-- `mstat ( -- )` - Print memory statistics
 - `bye ( -- )` - Exit Forth system
 
 ### Task Management
@@ -517,6 +539,18 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 
 ### File Operations
 - `included ( addr len -- )` - Load and execute Forth file
+- `r/o ( -- fam )` / `w/o ( -- fam )` / `r/w ( -- fam )` - File-access-mode constants for `open-file`/`create-file`
+- `open-file ( c-addr u fam -- fileid ior )` - Open an existing file; `ior` nonzero on failure
+- `create-file ( c-addr u fam -- fileid ior )` - Create (or truncate) a file for writing
+- `close-file ( fileid -- ior )` - Close a file opened by `open-file`/`create-file`
+- `read-file ( c-addr u1 fileid -- u2 ior )` - Read up to `u1` bytes into `c-addr`; `u2` is the actual count (0 at EOF)
+- `write-file ( c-addr u fileid -- ior )` - Write `u` bytes from `c-addr`
+- `read-line ( c-addr u1 fileid -- u2 flag ior )` - Read one line (up to `u1` bytes, newline stripped) into `c-addr`; `flag` is false at end-of-file
+- `write-line ( c-addr u fileid -- ior )` - Write `u` bytes from `c-addr` followed by a newline
+- `file-position ( fileid -- pos ior )` - Current byte offset (single-cell, not the ANS double-cell `ud`)
+- `reposition-file ( pos fileid -- ior )` - Seek to a byte offset
+- `file-size ( fileid -- size ior )` - Size of an open file in bytes (single-cell)
+- `delete-file ( c-addr u -- ior )` - Delete a file by name (no open file handle required)
 
 ## Standard Library (Forth)
 
@@ -638,6 +672,10 @@ Exercises `forget`/`boot` against `CREATE...DOES>` instances, repeated word rede
 ### forth/tests/numbers_test.fs
 
 Reads a number from input and doubles it, exercising `accept`, `number?`, both single- and double-number (`lo hi`) results, and the invalid-input case where `number?` leaves `c-addr len false` on the stack.
+
+### forth/tests/file_test.fs
+
+Round-trips a file through `create-file`/`write-line`/`close-file`, then `open-file`/`read-line`/`close-file`, then `delete-file`, and confirms a subsequent `open-file` on the deleted file fails with a nonzero `ior`. The path it uses is Linux-specific (`/tmp/...`); on ESP32 point it at a path valid for the mounted filesystem instead (e.g. `/littlefs/...` for `examples/esp32-usart.cpp`).
 
 ## System Integration
 

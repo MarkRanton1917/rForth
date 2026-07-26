@@ -144,6 +144,19 @@ static std::atomic<bool> abort_requested { false };
 static std::string abort_message;
 static ForthContext* abort_ctx = nullptr;
 
+static int load_depth = 0;
+
+struct LoadDepth {
+  LoadDepth()
+  {
+    load_depth++;
+  }
+  ~LoadDepth()
+  {
+    load_depth--;
+  }
+};
+
 struct ForthThrown : std::runtime_error {
   DU code;
   explicit ForthThrown(DU c)
@@ -2276,7 +2289,7 @@ int forth_interpret(std::string input, void (*output_hook)(int, const char*))
     outer(line);
     if (error_occured) break;
   }
-  if (!error_occured) {
+  if (!error_occured && load_depth == 0) {
     forth_print([&](std::ostringstream& os) {
       if (compile)
         os << " compiled" << ENDL;
@@ -2525,10 +2538,10 @@ void Code::exec()
       xt(this);
     }
     catch (...) {
-      if (!ctx->call_stack.empty()) ctx->call_stack.pop_back();
+      if (!ctx->call_stack.empty() && ctx->call_stack.back() == this) ctx->call_stack.pop_back();
       throw;
     }
-    ctx->call_stack.pop_back();
+    if (!ctx->call_stack.empty() && ctx->call_stack.back() == this) ctx->call_stack.pop_back();
     return;
   }
 
@@ -3027,9 +3040,12 @@ static void load(const char* fn)
   if (!f) throw std::runtime_error("Can't open file");
   char line[256];
   long n;
-  while ((n = f->read_line(line, sizeof(line) - 1)) >= 0) {
-    line[n] = '\0';
-    forth_interpret(line, nullptr);
+  {
+    LoadDepth depth;
+    while ((n = f->read_line(line, sizeof(line) - 1)) >= 0) {
+      line[n] = '\0';
+      forth_interpret(line, cb);
+    }
   }
   f->close();
   delete f;

@@ -2521,7 +2521,13 @@ void Code::exec()
       throw std::runtime_error(msg);
     }
     ctx->call_stack.push_back(this);
-    xt(this);
+    try {
+      xt(this);
+    }
+    catch (...) {
+      if (!ctx->call_stack.empty()) ctx->call_stack.pop_back();
+      throw;
+    }
     ctx->call_stack.pop_back();
     return;
   }
@@ -2539,23 +2545,29 @@ void Code::exec()
   ctx->ip = 0;
   size_t rs_frame_start = ctx->rs.size();
 
-  while (true) {
-    if (abort_requested.load()) {
-      std::string msg;
-      SYS_MUTEX_LOCK(forth_mutex);
-      msg = abort_message;
-      SYS_MUTEX_UNLOCK(forth_mutex);
-      throw std::runtime_error(msg);
+  try {
+    while (true) {
+      if (abort_requested.load()) {
+        std::string msg;
+        SYS_MUTEX_LOCK(forth_mutex);
+        msg = abort_message;
+        SYS_MUTEX_UNLOCK(forth_mutex);
+        throw std::runtime_error(msg);
+      }
+
+      if (ctx->pf == nullptr || ctx->ip >= ctx->pf->size()) break;
+
+      Code* w = (*ctx->pf)[ctx->ip++].get();
+      w->exec();
+      if (ctx->rs.size() < rs_frame_start) break;
     }
-
-    if (ctx->pf == nullptr || ctx->ip >= ctx->pf->size()) goto done;
-
-    Code* w = (*ctx->pf)[ctx->ip++].get();
-    w->exec();
-    if (ctx->rs.size() < rs_frame_start) goto done;
+  }
+  catch (...) {
+    if (ctx->rs.size() >= rs_frame_start) unnest();
+    if (!ctx->call_stack.empty() && ctx->call_stack.back() == this) ctx->call_stack.pop_back();
+    throw;
   }
 
-done:
   if (ctx->rs.size() >= rs_frame_start) unnest();
   if (!ctx->call_stack.empty() && ctx->call_stack.back() == this) ctx->call_stack.pop_back();
 }

@@ -2,23 +2,29 @@
 \ This library is licensed under the MIT License.
 \ See the LICENSE file in the root of the repository for the full license text.
 
-( utilities )
-: dump ( n-cells addr -- ) 
-  over dup 0> if 
-    0 do dup i cells + ? loop 2drop 
-  then ;
+: word-dump ( n-cells addr -- )
+  {: n-cells addr :}
+  n-cells 0 ?do addr i cells + ? loop ;
 
-: cdump ( n-bytes addr -- ) 
-  over dup 0> if 
-    0 do dup i + c@ . loop 2drop 
-  then ;
+: dump ( n-bytes addr -- )
+  {: n-bytes addr :}
+  n-bytes 0 ?do addr i + c@ . loop ;
 
-: memset ( val n-cells addr -- ) 
-  over dup 0> if 
-    0 do rot swap 2dup i cells + ! rot swap loop 
-  then 2drop drop ;
+: word-memset ( val n-cells addr -- )
+  {: val n-cells addr :}
+  n-cells 0 ?do val addr i cells + ! loop ;
 
-: cmemset ( val n-bytes addr -- ) 
-  rot 255 and -rot over dup 0> if 
-    0 do rot swap 2dup i + c! rot swap loop 
-  then 2drop drop ;
+: memset ( val n-bytes addr -- )
+  {: val n-bytes addr :}
+  n-bytes 0 ?do val 255 and addr i + c! loop ;
+
+: memcpy ( to from n-bytes -- )
+  {: to from n-bytes :} 
+  n-bytes 0 ?do from i + c@ to i + c! loop ;
+
+: memcmp ( addr1 addr2 n-bytes -- n )
+  {: addr1 addr2 n-bytes -- n :}
+  0 -> n
+  n-bytes 0 ?do
+    addr1 i + c@ addr2 i + c@ - dup if -> n leave else drop then
+  loop n ;

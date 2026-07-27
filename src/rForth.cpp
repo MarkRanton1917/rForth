@@ -3099,9 +3099,8 @@ static std::optional<DU> parse_number(const std::string& s)
   }
   char* p;
   errno = 0;
-  long n = strtol(cs, &p, b);
+  unsigned long long n = strtoull(cs, &p, b);
   if (errno || *p != '\0') return std::nullopt;
-  if (n < (long)std::numeric_limits<DU>::min() || n > (long)std::numeric_limits<DU>::max()) return std::nullopt;
   return (DU)n;
 }
 

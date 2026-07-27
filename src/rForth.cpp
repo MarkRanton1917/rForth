@@ -1250,6 +1250,26 @@ static const Code rom[] = {
       last->append(std::make_shared<Var>(alloc_heap((const uint8_t*)&val, sizeof(DU))));
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
+  CODE("2constant",
+    {
+      SYS_MUTEX_LOCK(forth_mutex);
+      dict_push(std::make_shared<Code>(read_word()));
+      DU hi = ss_pop();
+      DU lo = ss_pop();
+      last->append(std::make_shared<Lit>(lo));
+      last->append(std::make_shared<Lit>(hi));
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }),
+  CODE("2variable",
+    {
+      SYS_MUTEX_LOCK(forth_mutex);
+      dict_push(std::make_shared<Code>(read_word()));
+      DU val[2];
+      val[0] = 0;
+      val[1] = 0;
+      last->append(std::make_shared<Var>(alloc_heap((const uint8_t*)val, sizeof(DU) * 2)));
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }),
   CODE("immediate",
     {
       SYS_MUTEX_LOCK(forth_mutex);
@@ -1318,6 +1338,22 @@ static const Code rom[] = {
       DU addr = ss_pop();
       DU val = ss_pop();
       *(DU*)addr = val;
+    }),
+  CODE("2@",
+    {
+      DU addr = ss_pop();
+      DU lo = *(DU*)addr;
+      DU hi = *((DU*)addr + 1);
+      ss_push(lo);
+      ss_push(hi);
+    }),
+  CODE("2!",
+    {
+      DU addr = ss_pop();
+      DU hi = ss_pop();
+      DU lo = ss_pop();
+      *(DU*)addr = lo;
+      *((DU*)addr + 1) = hi;
     }),
   CODE("c@",
     {

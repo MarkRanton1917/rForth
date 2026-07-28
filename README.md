@@ -446,6 +446,9 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `active? ( id -- flag )` - Check if task is active
 - `resume ( id -- )` - Resume suspended task
 - `stop ( -- )` - Stop current task
+- `mutex ( "name" -- )` - Create a recursive mutex; the new word pushes its handle
+- `aсquire ( m -- )` - Take the mutex, blocking until it is free
+- `release ( m -- )` - Give the mutex back
 
 ### Floating-Point Operations (when USE_FLOAT=1)
 

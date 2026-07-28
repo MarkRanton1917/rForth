@@ -99,6 +99,7 @@ template<typename Fn>
 static void forth_print(Fn fn);
 static void abort_all_tasks();
 static void backtrace();
+static void release_mutexes(ForthContext* ctx, size_t depth);
 static void forth_core(std::string idiom);
 static void forth_task_entry(void* pvParameters);
 static std::optional<DU> parse_number(const std::string& s);
@@ -1294,6 +1295,7 @@ static const Code rom[] = {
       size_t rs_depth = ctx->rs.size();
       size_t ls_depth = ctx->ls.size();
       size_t call_depth = ctx->call_stack.size();
+      size_t mux_depth = ctx->mux.size();
 #if USE_FLOAT
       size_t fs_depth = ctx->fs.size();
       size_t lfs_depth = ctx->lfs.size();
@@ -1303,6 +1305,7 @@ static const Code rom[] = {
         ss_push(0);
       }
       catch (ForthThrown& t) {
+        release_mutexes(ctx, mux_depth);
         ctx->ss.resize(ss_depth);
         ctx->rs.resize(rs_depth);
         ctx->ls.resize(ls_depth);
@@ -1716,6 +1719,34 @@ static const Code rom[] = {
 #endif
       }
       ss_push(BOOL(active));
+    }),
+  CODE("mutex",
+    {
+      SYS_MUTEX_TYPE m = SYS_MUTEX_CREATE();
+      if (!m) throw std::runtime_error("Failed to create mutex");
+      SYS_MUTEX_LOCK(forth_mutex);
+      dict_push(std::make_shared<Code>(read_word()));
+      last->append(std::make_shared<Lit>((DU)(UFP)m));
+      SYS_MUTEX_UNLOCK(forth_mutex);
+    }),
+  CODE("acquire",
+    {
+      SYS_MUTEX_TYPE m = (SYS_MUTEX_TYPE)(UFP)ss_pop();
+      if (!m) throw std::runtime_error("Invalid mutex");
+      SYS_MUTEX_LOCK(m);
+      current_ctx->mux.push_back((void*)m);
+    }),
+  CODE("release",
+    {
+      SYS_MUTEX_TYPE m = (SYS_MUTEX_TYPE)(UFP)ss_pop();
+      if (!m) throw std::runtime_error("Invalid mutex");
+      // Drop the innermost record of this mutex rather than the last record overall: two
+      // different mutexes may be held at once and released in any order.
+      FV<void*>& held = current_ctx->mux;
+      auto it = std::find(held.rbegin(), held.rend(), (void*)m);
+      if (it == held.rend()) throw std::runtime_error("Mutex not held");
+      held.erase(std::next(it).base());
+      SYS_MUTEX_UNLOCK(m);
     }),
 #if USE_FLOAT
   CODE("f+",
@@ -2289,6 +2320,7 @@ int forth_interpret(std::string input, void (*output_hook)(int, const char*))
         });
         backtrace();
         error_occured = true;
+        release_mutexes(current_ctx, 0);
         current_ctx->ss.clear();
         current_ctx->rs.clear();
         current_ctx->ls.clear();
@@ -2388,6 +2420,17 @@ static void backtrace()
   });
 }
 
+// Gives back every mutex the context took above `depth`, innermost first. A recursive mutex is
+// owned by the task that took it, so this only ever runs on that task's own stack: inside catch,
+// at the end of forth_task_entry, and in the outer interpreter's error handler.
+static void release_mutexes(ForthContext* ctx, size_t depth)
+{
+  while (ctx->mux.size() > depth) {
+    SYS_MUTEX_UNLOCK((SYS_MUTEX_TYPE)(UFP)ctx->mux.back());
+    ctx->mux.pop_back();
+  }
+}
+
 static void forth_task_entry(void* pvParameters)
 {
   ForthContext* ctx = (ForthContext*)pvParameters;
@@ -2421,6 +2464,10 @@ static void forth_task_entry(void* pvParameters)
     SYS_MUTEX_UNLOCK(forth_mutex);
     abort_requested.store(true);
   }
+
+  // Covers the normal exit too: a task that ends still holding a mutex is a bug in the script,
+  // but leaving it locked would take down every other task with it.
+  release_mutexes(ctx, 0);
 
   ctx->finished = true;
   ctx->pf = nullptr;

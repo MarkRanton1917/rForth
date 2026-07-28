@@ -160,6 +160,7 @@ struct ForthContext {
   char pad[PAD_SIZE];
   size_t pad_ptr;
   int key_peek = INPUT_NONE;
+  FV<void*> mux;
 };
 
 struct Local {

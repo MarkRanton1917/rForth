@@ -22,3 +22,13 @@ variable tid2
   until
   ." all done" cr
 ;
+
+: forever begin 50 delay again ;
+variable tid3
+: main_stop ['] forever task tid3 !
+  100 delay
+  tid3 @ active? if ." running" cr else ." NOT RUNNING" cr then
+  tid3 @ stop
+  200 delay
+  tid3 @ active? 0= if ." stopped" cr else ." STILL RUNNING" cr then
+;

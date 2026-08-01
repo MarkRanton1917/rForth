@@ -476,7 +476,7 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `task ( xt -- id )` - Create new task from execution token
 - `active? ( id -- flag )` - Check if task is active
 - `resume ( id -- )` - Resume suspended task
-- `stop ( -- )` - Stop current task
+- `stop ( id -- )` - Stop a task, including the caller's own
 - `mutex ( "name" -- )` - Create a recursive mutex; the new word pushes its handle
 - `aсquire ( m -- )` - Take the mutex, blocking until it is free
 - `release ( m -- )` - Give the mutex back
@@ -695,7 +695,20 @@ rForth provides built-in words for task management:
 - **`active? ( id -- flag )`** - Check if task with given ID is active (true/-1 or false/0)
 - **`pause ( -- )`** - Yield control to other tasks
 - **`resume ( id -- )`** - Resume a suspended task
-- **`stop ( -- )`** - Suspend/terminate the current task
+- **`stop ( id -- )`** - Stop a task, its own id included
+
+Stopping is cooperative: the target notices the request between two words, or inside `delay`
+within 10 ms, and unwinds itself, so the mutexes it held are released. It is therefore not
+instantaneous - a task blocked in `acquire` stops only once it gets the mutex. Task 0 is the
+interpreter itself and cannot be stopped.
+
+```forth
+variable tid
+: worker begin 50 delay again ;
+' worker task tid !
+tid @ stop
+tid @ active?   \ 0
+```
 
 ### Multitasking Example
 

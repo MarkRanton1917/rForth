@@ -145,6 +145,8 @@ static std::atomic<bool> abort_requested { false };
 static std::string abort_message;
 static ForthContext* abort_ctx = nullptr;
 
+struct TaskStopped {};
+
 static int load_depth = 0;
 
 struct LoadDepth {
@@ -1632,19 +1634,25 @@ static const Code rom[] = {
         DU step = ms > 10 ? 10 : ms;
         SYS_SLEEP_MS(step);
         ms -= step;
+        if (current_ctx->stop_requested.load()) throw TaskStopped {};
         if (interrupt_requested.exchange(false)) throw std::runtime_error("User interrupt");
       }
     }),
   CODE("stop",
     {
-#if ESP_PLATFORM
-      SYS_TASK_SUSPEND(NULL);
-#else
-      current_ctx->finished = true;
-      if (current_ctx->handle != nullptr) {
-          SYS_TASK_DELETE(current_ctx->handle);
+      DU id = ss_pop();
+      SYS_MUTEX_LOCK(forth_mutex);
+      if (id < 0 || (size_t)id >= all_contexts.size()) {
+        SYS_MUTEX_UNLOCK(forth_mutex);
+        throw std::runtime_error("Invalid task id");
       }
-#endif
+      ForthContext* ctx = all_contexts[id];
+      SYS_MUTEX_UNLOCK(forth_mutex);
+      if (!ctx) throw std::runtime_error("Task context is null");
+      if (id == 0) throw std::runtime_error("Cannot stop the main task");
+
+      ctx->stop_requested.store(true);
+      if (ctx == current_ctx) throw TaskStopped {};
     }),
   CODE("task",
     {
@@ -2455,6 +2463,9 @@ static void forth_task_entry(void* pvParameters)
       w->exec();
     }
   }
+  catch (const TaskStopped&) {
+    ctx->stop_requested.store(false);
+  }
   catch (std::exception& e) {
     SYS_MUTEX_LOCK(forth_mutex);
     abort_message = e.what();
@@ -2614,6 +2625,10 @@ void Code::exec()
 
   if (interrupt_requested.exchange(false)) {
     throw std::runtime_error("User interrupt");
+  }
+
+  if (ctx->stop_requested.load()) {
+    throw TaskStopped {};
   }
 
   if (xt != nullptr) {

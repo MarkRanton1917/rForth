@@ -8,6 +8,7 @@
 #include <string>
 #include <cstdint>
 #include <memory>
+#include <atomic>
 
 #ifndef STR_BUF_COUNT
 #define STR_BUF_COUNT 2
@@ -175,6 +176,7 @@ struct ForthContext {
   char str_buf[STR_BUF_COUNT][STR_BUF_SIZE];
   size_t str_buf_idx = 0;
   int key_peek = INPUT_NONE;
+  std::atomic<bool> stop_requested { false };
   FV<void*> mux;
 };
 

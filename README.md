@@ -12,7 +12,8 @@ A lightweight, efficient **Forth interpreter** implementation designed for embed
 - **Word definitions** - Define custom words with `:` (colon) definitions
 - **Control structures** - `if/then`, `begin/until`, `begin/while/repeat`, `do/loop`, `do/+loop`
 - **Local variables** - `{: ... :}` named locals with `->` assignment, usable anywhere in a word body (including inside loops), with full recursion support; `f{: ... f:}` / `f->` provide the same for float locals when USE_FLOAT=1
-- **Memory management** - Configurable heap size with dynamic memory allocation; dictionary words are `std::shared_ptr`-owned, so `forget`/`boot` correctly free everything they remove — including recursive words and bodies shared across multiple `CREATE...DOES>` instances
+- **Memory management** - Configurable heap size with dynamic memory allocation; every node compiled at runtime is owned by a `std::unique_ptr` arena in creation order, so `forget`/`boot` free exactly what they remove — including recursive words and bodies shared across multiple `CREATE...DOES>` instances
+- **Flash-resident built-ins** - `Code` is a trivially destructible, `constexpr`-constructible 28-byte record, so the built-in word table and any table passed to `forth_dict_add()` are linked into flash and cost no RAM at all
 - **Case-sensitive or case-insensitive mode** - Compile-time configurable
 
 ### Advanced Features
@@ -30,13 +31,13 @@ rforth/
 │   ├── rForth.h          # Main header with core structures and macros
 │   └── rForth.cpp        # Implementation of Forth interpreter
 ├── forth/
-│   ├── memory.fs         # Forth utility library for memory operations
-│   ├── string.fs         # Forth utility library for string operations
+│   ├── memory.fs         # Memory word set, written in Forth - load with `included`
+│   ├── string.fs         # String word set, written in Forth - needs memory.fs first
 │   └── tests/
 │       ├── task_test.fs      # Example task management in Forth
 │       ├── stress_test.fs    # Regression test for dictionary/forget memory handling
 │       ├── numbers_test.fs   # Example number parsing (single and double)
-│       ├── string_test.fs    # Self-checking regression test for string.fs
+│       ├── string_test.fs    # Self-checking regression test for the string words
 │       └── file_test.fs      # Exercises the file-access word set end-to-end
 ├── examples/
 │   ├── esp32-usart.cpp   # ESP32 UART interface example
@@ -60,18 +61,27 @@ idf_component_register(
 
 ### Build Options (in `CMakeLists.txt`)
 
-Configure the Forth interpreter with compile-time definitions:
+Every option has a default in `rForth.h`, so the library builds with none of them set. Override
+only what you need:
 
 ```cmake
 add_compile_definitions(
-  CASE_SENSITIVE=1        # 1=case-sensitive, 0=case-insensitive
-  PAD_SIZE=256            # Scratch buffer available to the program through pad
+  CASE_SENSITIVE=1        # 1=case-sensitive, 0=case-insensitive          (default 1)
+  PAD_SIZE=128            # Scratch buffer available to the program through pad (default 64)
   STR_BUF_COUNT=2         # Transient buffers for interpreted s" (2 is the Forth-2012 minimum)
   STR_BUF_SIZE=80         # Bytes per transient buffer (80 is the Forth-2012 minimum)
-  HEAP_SIZE=65536         # Heap size in bytes
-  USE_FLOAT=1             # 1=enable floating-point, 0=disable
+  HEAP_SIZE=16384         # Data-space size in bytes                      (default 8192)
+  USE_FLOAT=1             # 1=enable floating-point, 0=disable            (default 0)
+  KEEP_COMMENTS=0         # 1=keep `( ... )` inside definitions so SEE can print them (default 0)
 )
 ```
+
+`HEAP_SIZE` is a statically allocated array, so it is paid in `.bss` whether the program uses it
+or not; it backs `variable`/`create`/`allot`, not word definitions, which go on the C++ heap.
+
+`KEEP_COMMENTS=1` makes a comment inside a colon definition compile into the word, costing a node
+plus the comment text at runtime. It only affects what `see` prints; comments are parsed and
+skipped correctly either way.
 
 `NUM_BUF_SIZE` (the pictured numeric output buffer) defaults to `2 * bits-per-cell + 2`, the
 standard minimum, and rarely needs overriding - raise it only if `hold` is used to build
@@ -95,7 +105,7 @@ Three separate regions, none of which overlap:
   ```
 
   A third literal reuses the first buffer, so a string that must outlive the next `s"` has to be
-  copied (see `str!` in `forth/string.fs`). Compiled `s"` inside a definition is unaffected: it
+  copied (see `str!`). Compiled `s"` inside a definition is unaffected: it
   carries its own copy. A literal longer than `STR_BUF_SIZE` raises `String buffer overflow`.
 - **Number buffer** holds what `<# ... #>` builds. Each `<#` restarts it, so the result of `#>`
   has to be consumed or copied before the next conversion.
@@ -105,7 +115,7 @@ Three separate regions, none of which overlap:
 For Linux development and testing, compile with Linux platform definitions:
 
 ```bash
-g++ -DLINUX_PLATFORM -DUSE_FLOAT=1 -DPAD_SIZE=256 -DHEAP_SIZE=65536 -DCASE_SENSITIVE=1 src/rForth.cpp examples/linux.cpp -Isrc -o rforth -lm
+g++ -std=c++17 -DLINUX_PLATFORM -DUSE_FLOAT=1 -DPAD_SIZE=128 -DHEAP_SIZE=16384 src/rForth.cpp examples/linux.cpp -Isrc -o rforth -lm
 ```
 
 ## Core Data Types
@@ -135,7 +145,7 @@ Everything below is declared in `rForth.h` under `// api` (implemented by the li
 - **`int forth_vm(int (*input_hook)(), void (*output_hook)(int, const char*))`** - Character-oriented, non-blocking front end for interactive input. Each call pulls **one** character from `input_hook()` (which should return `INPUT_NONE` when nothing is available yet — never block), buffers it, and once the buffered line ends in a newline, hands it to `forth_interpret()` internally. Returns `-1` while still buffering a line, or the result of `forth_interpret()` (`0`) once a line was processed. Intended to be polled repeatedly from a task/loop, one call per available character.
 - **`bool forth_waiting_input()`** - Returns whether the interpreter is currently parked in a blocking input word (`key`, `accept`). Use it to decide whether the next character from your input source should be routed to satisfy that pending read rather than treated as ordinary REPL input.
 - **`void forth_request_interrupt()`** - Requests that the interpreter abort with a `"User interrupt"` error at its next opportunity: checked at the top of every word's `exec()`, at the top of every loop iteration, and inside the blocking wait in `key`/`accept`, so it also breaks a program that's parked waiting for input. Use this to implement a break/Ctrl-C key.
-- **`void forth_dict_add(const Code* words, size_t size)`** - Appends an array of host-defined `Code` entries (built with the `CODE`/`IMMD`/`COMP`/`ICOMP` macros, see [Macros for Defining Words](#macros-for-defining-words)) to the dictionary, so Forth code can call them like any built-in word. `words` must outlive the interpreter — the dictionary stores unowned references to it (`forth_init()`'s own `rom[]` table is `std::shared_ptr`-owned instead, since it can be `forget`-ten; a `forth_dict_add()` table cannot).
+- **`void forth_dict_add(const Code* words, size_t size)`** - Appends an array of host-defined `Code` entries (built with the `CODE`/`IMMD`/`COMP`/`ICOMP` macros, see [Macros for Defining Words](#macros-for-defining-words)) to the dictionary, so Forth code can call them like any built-in word. `words` must outlive the interpreter — the dictionary stores unowned pointers into it, exactly as it does for `forth_init()`'s own `rom[]` table. Declare the table `static const` (or `constexpr`) at namespace or class scope so it is constant-initialized and lands in flash; a table built at runtime works but costs `sizeof(Code)` of RAM per word. Neither table can be `forget`-ten — `forget`/`boot` stop at the last word registered this way.
 - **`void ss_push(DU n)` / `DU ss_pop()`** - Push/pop the integer data stack. Use these from inside a `CODE(...)` callback to read arguments and leave results, exactly as the built-in words do.
 - **`void fs_push(DF n)` / `DF fs_pop()`** *(when `USE_FLOAT=1`)* - Push/pop the float stack, the floating-point counterpart to `ss_push`/`ss_pop`.
 - **`DU alloc_heap(const uint8_t* val, size_t size)`** - Copies `size` bytes from `val` into the Forth heap and returns the resulting address as a `DU`, advancing the heap pointer (throws `"Heap overflow"` if the heap is exhausted). This is what `create`/`variable`/`constant` use internally; call it directly if a custom word needs to allocate heap-backed storage.
@@ -393,11 +403,11 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `ascii ( "c" -- n )` - Parse the next word as a single character and push its ASCII code
 
 ### String and Comment Operations (compile-time)
-- `( ... ) ` - Multi-line comment (immediate)
+- `( ... ) ` - Multi-line comment (immediate). Discarded, unless `KEEP_COMMENTS=1` compiles it into the enclosing definition so `see` can print it back
 - `\ ... ` - Single-line comment to end of line (immediate)
 - `.( string ) ` - Print string immediately (immediate)
 - `." string " ` - Print string at compile/execution time (immediate)
-- `s" string " ( -- addr len )` - Create string literal, returns address and length (immediate). Interpreted outside a colon definition, the buffer is transient (backed by the task's PAD, per ANS Forth convention) and only valid until the next PAD-consuming operation; compiled inside a word, its text is owned by the word and lives as long as the word does.
+- `s" string " ( -- addr len )` - Create string literal, returns address and length (immediate). Interpreted outside a colon definition, the text goes into one of the task's transient string buffers (see [Buffers](#buffers)), valid only until `STR_BUF_COUNT` further interpreted `s"` have reused it; compiled inside a word, its text is owned by the word and lives as long as the word does.
 - `abort" string " ` - Abort with message string (immediate)
 - `abort ( -- )` - Abort with the default "Aborted" message
 
@@ -429,7 +439,7 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `: name ... ;` - Define a new word (compile mode)
 - `[ ( -- )` - Switch to interpretation mode
 - `] ( -- )` - Switch to compilation mode
-- `immediate ( -- )` - Make last word immediate
+- `immediate ( -- )` - Make the last word immediate. Throws if no user-defined word has been created yet: built-in words live in flash and cannot be patched
 - `execute ( xt -- )` - Execute word at execution token
 - `throw ( n -- )` - If `n` is nonzero, raise it as a Forth exception, unwinding to the nearest enclosing `catch` (or aborting the current input line if none is active). No effect if `n` is zero
 - `catch ( i*x xt -- j*x 0 | i*x n )` - Execute `xt`; if it completes normally, push `0`. If it (or anything it calls) executes `throw` with a nonzero code, restore the stacks to their depth at the time `catch` began and push that code instead. Does **not** catch `abort`/`abort"` or other internal fatal errors — those still abort the line unconditionally
@@ -586,20 +596,37 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `file-size ( fileid -- size ior )` - Size of an open file in bytes (single-cell)
 - `delete-file ( c-addr u -- ior )` - Delete a file by name (no open file handle required)
 
-## Standard Library (Forth)
+## Standard Library
 
-### Memory Utilities (forth/memory.fs)
+The memory and string word sets are not built into the interpreter. They ship as ordinary Forth
+source - `forth/memory.fs` and `forth/string.fs` - and are loaded with `included`:
 
-- `dump ( n-cells addr -- )` - Dump n cells starting from address
-- `cdump ( n-bytes addr -- )` - Dump n bytes starting from address
-- `memset ( val n-cells addr -- )` - Fill n cells with value
-- `cmemset ( val n-bytes addr -- )` - Fill n bytes with value
+```forth
+s" memory.fs" included
+s" string.fs" included
+```
 
-### String Utilities (forth/string.fs)
+Order matters: `string.fs` uses `memcpy`, `memcmp` and `memset` from `memory.fs`. Both are plain
+Forth, so a word costs a dictionary node for itself plus one pointer per token in its body -
+load only the file you need, and `forget` the set when you are done with it.
 
-Strings are `(addr len)` pairs. Requires `memory.fs`. Words that produce a string take the
-destination buffer as an argument, because `pad` holds the result of both `s"` and `<# ... #>`:
-two interpreted `s"` in a row return the same buffer.
+`forth/tests/string_test.fs` is a self-checking regression test for `string.fs`; load both files
+before running it.
+
+### Memory Utilities
+
+- `word-dump ( n-cells addr -- )` - Dump n cells starting from address
+- `dump ( n-bytes addr -- )` - Dump n bytes starting from address
+- `word-memset ( val n-cells addr -- )` - Fill n cells with value
+- `memset ( val n-bytes addr -- )` - Fill n bytes with value
+- `memcpy ( to from n-bytes -- )` - Copy n bytes, overlap-safe
+- `memcmp ( addr1 addr2 n-bytes -- n )` - Difference of the first bytes that differ, 0 if equal
+
+### String Utilities
+
+Strings are `(addr len)` pairs. Words that produce a string take the destination buffer as an
+argument, because `<# ... #>` leaves its result in a transient buffer that the next conversion
+overwrites.
 
 Character classification and case (ASCII only - applied byte by byte, so UTF-8 above U+007F is
 left alone rather than mangled):
@@ -631,15 +658,7 @@ Building:
 
 Numbers:
 
-- `hex-digit ( c -- n | -1 )`
-- `parse-hex ( a u -- n flag )` - Independent of `base`, unlike `number?`
 - `n>str ( n dst -- dst len )` - Signed, in the current base
-
-UTF-8:
-
-- `u8-size ( a -- n )` - Length of the sequence starting at a byte
-- `u8-len ( a u -- n )` - Characters rather than bytes
-- `u8-trunc ( a u n -- a u' )` - Cut to n characters without splitting a sequence
 
 ## Macros for Defining Words
 
@@ -683,8 +702,10 @@ rForth uses the traditional Forth stack model:
 
 ### Memory Layout
 
-- **Heap** - Dynamic allocations for word definitions
-- **PAD** - Input buffer for interactive commands
+- **Flash** - The built-in word table and anything registered through `forth_dict_add()`; no RAM cost
+- **Data space** - The statically allocated `HEAP_SIZE` array behind `variable`, `create`, `allot` and `here`
+- **C++ heap** - Words compiled at runtime: one node per token, owned by an arena that `forget`/`boot` unwind in creation order
+- **PAD** - Per-task scratch buffer the program owns; nothing in the system writes to it
 - **Stacks** - Return and data stacks in task-local storage
 
 ## Multitasking Support

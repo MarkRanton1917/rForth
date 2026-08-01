@@ -17,6 +17,8 @@
 #include <optional>
 #include <utility>
 #include <limits>
+#include <new>
+#include <type_traits>
 
 #define BASE (*(DU*)(&(heap[0])))
 
@@ -120,7 +122,25 @@ static void _local_store_f(Code* c);
 static size_t locals_base_f();
 #endif
 
-static FV<std::shared_ptr<Code>> dict;
+static void destroy_node(Code* c);
+
+struct NodeDeleter {
+  void operator()(Code* c) const
+  {
+    destroy_node(c);
+  }
+};
+
+typedef std::unique_ptr<Code, NodeDeleter> NodePtr;
+
+struct DictEntry {
+  Code* w;
+  U32 heap_mark;
+  U32 node_mark;
+};
+
+static FV<DictEntry> dict;
+static FV<NodePtr> node_arena;
 static uint8_t heap[HEAP_SIZE];
 static size_t heap_ptr = 0;
 static int core_boundary = 0;
@@ -169,33 +189,112 @@ struct ForthThrown : std::runtime_error {
   }
 };
 
-static inline void dict_push(std::shared_ptr<Code> c)
+static void destroy_node(Code* c)
 {
-  last = c.get();
-  dict.push(std::move(c));
+  if (c->owns_name) free((void*)c->name);
+  if (c->owns_desc) free((void*)c->desc);
+  delete c->pf;
+  delete c->p1;
+  ::operator delete((void*)c);
+}
+
+template<typename T, typename... A>
+static NodePtr construct_node(A&&... a)
+{
+  static_assert(std::is_trivially_destructible<T>::value, "Code nodes must stay trivially destructible");
+  void* m = ::operator new(sizeof(T));
+  try {
+    return NodePtr(new (m) T(std::forward<A>(a)...));
+  }
+  catch (...) {
+    ::operator delete(m);
+    throw;
+  }
+}
+
+template<typename T, typename... A>
+static T* new_node(A&&... a)
+{
+  NodePtr p = construct_node<T>(std::forward<A>(a)...);
+  T* raw = static_cast<T*>(p.get());
+  node_arena.push_back(std::move(p));
+  return raw;
+}
+
+static void arena_release(size_t mark)
+{
+  node_arena.resize(mark);
+}
+
+static inline void dict_push(Code* c)
+{
+  last = c;
+  dict.push({ c, (U32)heap_ptr, (U32)node_arena.size() });
+}
+
+static inline void dict_push(NodePtr c)
+{
+  dict_push(c.release());
 }
 
 static inline Code* dict_pop()
 {
-  dict.pop();
-  return last = dict[-1].get();
+  Code* c = dict.pop().w;
+  if (c->type() == CodeType::TMP) {
+    NodePtr scratch(c);
+  }
+  return last = dict[-1].w;
 }
 
-static inline Code* bran_tgt()
+static const CodeList no_body;
+
+static inline const CodeList& ro_body(const Code* c)
 {
-  return dict[-2]->pf[-1].get();
+  return c->pf ? *c->pf : no_body;
 }
 
-static inline std::shared_ptr<Code> unowned_ref(const Code* c)
+static inline const CodeList& ro_alt(const Code* c)
 {
-  return std::shared_ptr<Code>(const_cast<Code*>(c), [](Code*) {});
+  return c->p1 ? *c->p1 : no_body;
+}
+
+static inline CodeList& body_of(Code* c)
+{
+  if (!c->pf) c->pf = new CodeList();
+  return *c->pf;
+}
+
+static inline CodeList& alt_of(Code* c)
+{
+  if (!c->p1) c->p1 = new CodeList();
+  return *c->p1;
+}
+
+static inline Bran* bran_tgt()
+{
+  return (Bran*)ro_body(dict[-2].w)[-1];
 }
 
 static inline Code* compiling_root()
 {
   for (int i = (int)dict.size() - 1; i >= 0; --i)
-    if (dict[i]->code_type != CodeType::TMP) return dict[i].get();
+    if (dict[i].w->type() != CodeType::TMP) return dict[i].w;
   return nullptr;
+}
+
+static void compact(Code* c)
+{
+  for (CodeList** l : { &c->pf, &c->p1 }) {
+    if (!*l) continue;
+    if ((*l)->empty()) {
+      delete *l;
+      *l = nullptr;
+      continue;
+    }
+    (*l)->shrink_to_fit();
+    for (Code* w : **l)
+      if (w->type() == CodeType::BRAN) compact(w);
+  }
 }
 
 static inline void allot(size_t n)
@@ -220,7 +319,9 @@ static inline std::pair<DU, DU> unpack_double(DU2 v)
   return std::make_pair(lo, hi);
 }
 
-static const Code rom[] = {
+static_assert(std::is_trivially_destructible<Code>::value, "Code must stay trivially destructible");
+
+static constexpr Code rom[] = {
   CODE("bye", exit(0)),
   CODE("+",
     {
@@ -770,7 +871,7 @@ static const Code rom[] = {
       if (s.length() != 1) throw std::runtime_error("Invalid ASCII character");
       if (compile) {
         SYS_MUTEX_LOCK(forth_mutex);
-        last->append(std::make_shared<Lit>((DU)s[0]));
+        last->append(new_node<Lit>((DU)s[0]));
         SYS_MUTEX_UNLOCK(forth_mutex);
       }
       else {
@@ -924,25 +1025,26 @@ static const Code rom[] = {
   IMMD(".(",
     {
       std::string s = read_word(")").substr(1);
+#if KEEP_COMMENTS
       if (compile) {
         SYS_MUTEX_LOCK(forth_mutex);
-        last->append(std::make_shared<Comment>(s, true));
+        last->append(new_node<Comment>(s, true));
         SYS_MUTEX_UNLOCK(forth_mutex);
-        forth_print([&](std::ostringstream& os) { os << s; });
       }
-      else {
-        forth_print([&](std::ostringstream& os) { os << s; });
-      }
+#endif
+      forth_print([&](std::ostringstream& os) { os << s; });
     }),
   IMMD("(",
     {
       std::string s;
       getline(fin, s, ')');
+#if KEEP_COMMENTS
       if (compile) {
         SYS_MUTEX_LOCK(forth_mutex);
-        last->append(std::make_shared<Comment>(s, false));
+        last->append(new_node<Comment>(s, false));
         SYS_MUTEX_UNLOCK(forth_mutex);
       }
+#endif
     }),
   IMMD("\\",
     {
@@ -954,7 +1056,7 @@ static const Code rom[] = {
       std::string s = read_word("\"").substr(1);
       if (compile) {
         SYS_MUTEX_LOCK(forth_mutex);
-        last->append(std::make_shared<Str>(s, (int)last->token, (int)last->pf.size(), true));
+        last->append(new_node<Str>(s, (int)last->token, (int)ro_body(last).size(), true));
         SYS_MUTEX_UNLOCK(forth_mutex);
       }
       else {
@@ -966,7 +1068,7 @@ static const Code rom[] = {
       std::string s = read_word("\"").substr(1);
       if (compile) {
         SYS_MUTEX_LOCK(forth_mutex);
-        last->append(std::make_shared<Str>(s, (int)last->token, (int)last->pf.size(), false));
+        last->append(new_node<Str>(s, (int)last->token, (int)ro_body(last).size(), false));
         SYS_MUTEX_UNLOCK(forth_mutex);
       }
       else {
@@ -983,7 +1085,7 @@ static const Code rom[] = {
     {
       std::string s = read_word("\"").substr(1);
       if (compile) {
-        auto c = std::make_shared<Code>("abort\"", "", _abort, 0);
+        Code* c = new_node<Code>("abort\"", "", _abort, 0);
         c->set_desc(s);
         SYS_MUTEX_LOCK(forth_mutex);
         last->append(c);
@@ -1056,15 +1158,15 @@ static const Code rom[] = {
   ICOMP("if",
     {
       SYS_MUTEX_LOCK(forth_mutex);
-      last->append(std::make_shared<Bran>(_if));
-      dict_push(std::make_shared<Tmp>());
+      last->append(new_node<Bran>(_if));
+      dict_push(construct_node<Tmp>());
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   ICOMP("else",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = bran_tgt();
-      b->pf.merge(last->pf);
+      body_of(b).merge(body_of(last));
       b->stage = 1;
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
@@ -1074,11 +1176,11 @@ static const Code rom[] = {
       Code* b = bran_tgt();
       int s = b->stage;
       if (s == 0) {
-        b->pf.merge(last->pf);
+        body_of(b).merge(body_of(last));
         dict_pop();
       }
       else {
-        b->p1.merge(last->pf);
+        alt_of(b).merge(body_of(last));
         if (s == 1) dict_pop();
       }
       SYS_MUTEX_UNLOCK(forth_mutex);
@@ -1086,15 +1188,15 @@ static const Code rom[] = {
   ICOMP("begin",
     {
       SYS_MUTEX_LOCK(forth_mutex);
-      last->append(std::make_shared<Bran>(_begin));
-      dict_push(std::make_shared<Tmp>());
+      last->append(new_node<Bran>(_begin));
+      dict_push(construct_node<Tmp>());
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   ICOMP("while",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = bran_tgt();
-      b->pf.merge(last->pf);
+      body_of(b).merge(body_of(last));
       b->stage = 2;
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
@@ -1102,7 +1204,7 @@ static const Code rom[] = {
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = bran_tgt();
-      b->p1.merge(last->pf);
+      alt_of(b).merge(body_of(last));
       dict_pop();
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
@@ -1110,7 +1212,7 @@ static const Code rom[] = {
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = bran_tgt();
-      b->pf.merge(last->pf);
+      body_of(b).merge(body_of(last));
       dict_pop();
       b->stage = 1;
       SYS_MUTEX_UNLOCK(forth_mutex);
@@ -1119,26 +1221,26 @@ static const Code rom[] = {
     {
       SYS_MUTEX_LOCK(forth_mutex);
       Code* b = bran_tgt();
-      b->pf.merge(last->pf);
+      body_of(b).merge(body_of(last));
       dict_pop();
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   ICOMP("do",
     {
       SYS_MUTEX_LOCK(forth_mutex);
-      last->append(std::make_shared<Bran>(_tor2));
-      last->append(std::make_shared<Bran>(nullptr));
-      dict_push(std::make_shared<Tmp>());
+      last->append(new_node<Bran>(_tor2));
+      last->append(new_node<Bran>(nullptr));
+      dict_push(construct_node<Tmp>());
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   ICOMP("?do",
     {
       SYS_MUTEX_LOCK(forth_mutex);
-      last->append(std::make_shared<Bran>(_tor2));
-      auto ph = std::make_shared<Bran>(nullptr);
-      ph->q.push(1);
+      last->append(new_node<Bran>(_tor2));
+      Bran* ph = new_node<Bran>(nullptr);
+      ph->val = 1;
       last->append(ph);
-      dict_push(std::make_shared<Tmp>());
+      dict_push(construct_node<Tmp>());
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   CODE("i", ss_push(current_ctx->rs[-1])),
@@ -1150,7 +1252,7 @@ static const Code rom[] = {
       Code* b = bran_tgt();
       b->xt = _loop;
       b->name = "loop";
-      b->pf.merge(last->pf);
+      body_of(b).merge(body_of(last));
       dict_pop();
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
@@ -1160,7 +1262,7 @@ static const Code rom[] = {
       Code* b = bran_tgt();
       b->xt = _plus_loop;
       b->name = "+loop";
-      b->pf.merge(last->pf);
+      body_of(b).merge(body_of(last));
       dict_pop();
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
@@ -1174,7 +1276,7 @@ static const Code rom[] = {
 #if USE_FLOAT
       current_locals_f.clear();
 #endif
-      dict_push(std::make_shared<Code>(read_word()));
+      dict_push(new_node<Code>(read_word()));
       compile = true;
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
@@ -1188,6 +1290,7 @@ static const Code rom[] = {
 #endif
       Code* exit_word = find("exit");
       if (exit_word) last->append(exit_word);
+      compact(last);
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   ICOMP("{:",
@@ -1211,11 +1314,8 @@ static const Code rom[] = {
         block_total++;
         if (!after_dash) from_stack++;
       }
-      auto c = std::make_shared<Code>(_locals_enter);
+      Locals* c = new_node<Locals>(_locals_enter, block_total, from_stack, slot_start);
       c->set_desc(body);
-      c->q.push((DU)block_total);
-      c->q.push((DU)from_stack);
-      c->q.push((DU)slot_start);
       last->append(c);
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
@@ -1233,53 +1333,59 @@ static const Code rom[] = {
         SYS_MUTEX_UNLOCK(forth_mutex);
         throw std::runtime_error("Unknown local '" + s + "'");
       }
-      auto c = std::make_shared<Code>(_local_store);
+      Code* c = new_node<Code>(_local_store);
       c->set_desc(s);
-      c->q.push((DU)slot);
+      c->val = (DU)slot;
       last->append(c);
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   CODE("constant",
     {
       SYS_MUTEX_LOCK(forth_mutex);
-      dict_push(std::make_shared<Code>(read_word()));
+      dict_push(new_node<Code>(read_word()));
       DU v = ss_pop();
-      last->append(std::make_shared<Lit>(v));
+      last->append(new_node<Lit>(v));
+      compact(last);
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   CODE("variable",
     {
       SYS_MUTEX_LOCK(forth_mutex);
-      dict_push(std::make_shared<Code>(read_word()));
+      dict_push(new_node<Code>(read_word()));
       DU val = 0;
-      last->append(std::make_shared<Var>(alloc_heap((const uint8_t*)&val, sizeof(DU))));
+      last->append(new_node<Var>(alloc_heap((const uint8_t*)&val, sizeof(DU))));
+      compact(last);
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   CODE("2constant",
     {
       SYS_MUTEX_LOCK(forth_mutex);
-      dict_push(std::make_shared<Code>(read_word()));
+      dict_push(new_node<Code>(read_word()));
       DU hi = ss_pop();
       DU lo = ss_pop();
-      last->append(std::make_shared<Lit>(lo));
-      last->append(std::make_shared<Lit>(hi));
+      last->append(new_node<Lit>(lo));
+      last->append(new_node<Lit>(hi));
+      compact(last);
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   CODE("2variable",
     {
       SYS_MUTEX_LOCK(forth_mutex);
-      dict_push(std::make_shared<Code>(read_word()));
+      dict_push(new_node<Code>(read_word()));
       DU val[2];
       val[0] = 0;
       val[1] = 0;
-      last->append(std::make_shared<Var>(alloc_heap((const uint8_t*)val, sizeof(DU) * 2)));
+      last->append(new_node<Var>(alloc_heap((const uint8_t*)val, sizeof(DU) * 2)));
+      compact(last);
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   CODE("immediate",
     {
       SYS_MUTEX_LOCK(forth_mutex);
-      last->immd = 1;
+      bool user_word = (int)dict.size() > core_boundary;
+      if (user_word) last->immd = 1;
       SYS_MUTEX_UNLOCK(forth_mutex);
+      if (!user_word) throw std::runtime_error("No user word to make immediate");
     }),
   CODE("execute",
     {
@@ -1324,15 +1430,15 @@ static const Code rom[] = {
   CODE("create",
     {
       SYS_MUTEX_LOCK(forth_mutex);
-      dict_push(std::make_shared<Code>(read_word()));
-      last->append(std::make_shared<Var>((DU)&heap[heap_ptr]));
+      dict_push(new_node<Code>(read_word()));
+      last->append(new_node<Var>((DU)&heap[heap_ptr]));
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   ICOMP("does>",
     {
       SYS_MUTEX_LOCK(forth_mutex);
-      last->append(std::make_shared<Bran>(_does));
-      last->pf[-1]->token = last->token;
+      last->append(new_node<Bran>(_does));
+      ro_body(last)[-1]->token = last->token;
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   CODE("@",
@@ -1421,7 +1527,7 @@ static const Code rom[] = {
       if (!w) throw std::runtime_error("Undefined word");
       if (compile) {
         SYS_MUTEX_LOCK(forth_mutex);
-        last->append(std::make_shared<Lit>((DU)w));
+        last->append(new_node<Lit>((DU)w));
         SYS_MUTEX_UNLOCK(forth_mutex);
       }
       else
@@ -1612,18 +1718,28 @@ static const Code rom[] = {
         return;
       }
       int t = std::max((int)w->token, core_boundary);
-      if ((size_t)t < dict.size()) heap_ptr = dict[t]->heap_mark;
+      size_t nm = node_arena.size();
+      if ((size_t)t < dict.size()) {
+        heap_ptr = dict[t].heap_mark;
+        nm = dict[t].node_mark;
+      }
       for (int i = dict.size(); i > t; i--)
         dict_pop();
+      arena_release(nm);
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   CODE("boot",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       int t = core_boundary;
-      if ((size_t)t < dict.size()) heap_ptr = dict[t]->heap_mark;
+      size_t nm = node_arena.size();
+      if ((size_t)t < dict.size()) {
+        heap_ptr = dict[t].heap_mark;
+        nm = dict[t].node_mark;
+      }
       for (int i = dict.size(); i > t; i--)
         dict_pop();
+      arena_release(nm);
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   CODE("pause", { SYS_SLEEP_MS(1); }),
@@ -1661,7 +1777,7 @@ static const Code rom[] = {
       if (!xt) throw std::runtime_error("Invalid xt for task");
       ForthContext* new_ctx = new ForthContext();
       new_ctx->xt = xt;
-      new_ctx->pf = &xt->pf;
+      new_ctx->pf = xt->pf;
       new_ctx->ip = 0;
       new_ctx->finished = false;
       new_ctx->handle = nullptr;
@@ -1735,8 +1851,8 @@ static const Code rom[] = {
       SYS_MUTEX_TYPE m = SYS_MUTEX_CREATE();
       if (!m) throw std::runtime_error("Failed to create mutex");
       SYS_MUTEX_LOCK(forth_mutex);
-      dict_push(std::make_shared<Code>(read_word()));
-      last->append(std::make_shared<Lit>((DU)(UFP)m));
+      dict_push(new_node<Code>(read_word()));
+      last->append(new_node<Lit>((DU)(UFP)m));
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   CODE("acquire",
@@ -2138,18 +2254,18 @@ static const Code rom[] = {
   CODE("fvariable",
     {
       SYS_MUTEX_LOCK(forth_mutex);
-      dict_push(std::make_shared<Code>(read_word()));
+      dict_push(new_node<Code>(read_word()));
       DF val = 0.0;
       DU addr = alloc_heap((const uint8_t*)&val, sizeof(DF));
-      last->append(std::make_shared<Var>(addr));
+      last->append(new_node<Var>(addr));
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   CODE("fconstant",
     {
       SYS_MUTEX_LOCK(forth_mutex);
       DF val = fs_pop();
-      dict_push(std::make_shared<Code>(read_word()));
-      last->append(std::make_shared<FLit>(val));
+      dict_push(new_node<Code>(read_word()));
+      last->append(new_node<FLit>(val));
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
   ICOMP("f{:",
@@ -2173,11 +2289,8 @@ static const Code rom[] = {
         block_total++;
         if (!after_dash) from_stack++;
       }
-      auto c = std::make_shared<Code>(_locals_enter_f);
+      Locals* c = new_node<Locals>(_locals_enter_f, block_total, from_stack, slot_start);
       c->set_desc(body);
-      c->q.push((DU)block_total);
-      c->q.push((DU)from_stack);
-      c->q.push((DU)slot_start);
       last->append(c);
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
@@ -2195,9 +2308,9 @@ static const Code rom[] = {
         SYS_MUTEX_UNLOCK(forth_mutex);
         throw std::runtime_error("Unknown local '" + s + "'");
       }
-      auto c = std::make_shared<Code>(_local_store_f);
+      Code* c = new_node<Code>(_local_store_f);
       c->set_desc(s);
-      c->q.push((DU)slot);
+      c->val = (DU)slot;
       last->append(c);
       SYS_MUTEX_UNLOCK(forth_mutex);
     }),
@@ -2228,9 +2341,9 @@ DF fs_pop()
 
 void forth_dict_add(const Code* words, size_t size)
 {
-  dict.reserve(size * 2);
-  for (int i = 0; i < size; ++i)
-    dict_push(unowned_ref(&words[i]));
+  dict.reserve(dict.size() + size);
+  for (size_t i = 0; i < size; ++i)
+    dict_push(const_cast<Code*>(&words[i]));
   core_boundary = (int)dict.size();
 }
 
@@ -2247,9 +2360,9 @@ DU alloc_heap(const uint8_t* val, size_t size)
 void forth_init()
 {
   const int sz = sizeof(rom) / sizeof(Code);
-  dict.reserve(sz * 2);
+  dict.reserve(sz);
   for (int i = 0; i < sz; ++i)
-    dict_push(unowned_ref(&rom[i]));
+    dict_push(const_cast<Code*>(&rom[i]));
   core_boundary = (int)dict.size();
   heap_ptr = sizeof(DU);
   BASE = 10;
@@ -2459,7 +2572,7 @@ static void forth_task_entry(void* pvParameters)
       if (!ctx->pf || ctx->ip >= ctx->pf->size()) break;
       if (abort_requested.load()) break;
 
-      Code* w = (*ctx->pf)[ctx->ip++].get();
+      Code* w = (*ctx->pf)[ctx->ip++];
       w->exec();
     }
   }
@@ -2593,7 +2706,7 @@ static void unnest()
   ctx->rs.pop_back();
   ctx->ip = (size_t)ctx->rs.back();
   ctx->rs.pop_back();
-  ctx->pf = (const FV<std::shared_ptr<Code>>*)ctx->rs.back();
+  ctx->pf = (const CodeList*)ctx->rs.back();
   ctx->rs.pop_back();
   ctx->rs.pop_back();
   if (has_locals) {
@@ -2660,7 +2773,7 @@ void Code::exec()
 #endif
   ctx->call_stack.push_back(this);
 
-  ctx->pf = &pf;
+  ctx->pf = pf;
   ctx->ip = 0;
   size_t rs_frame_start = ctx->rs.size();
 
@@ -2676,7 +2789,7 @@ void Code::exec()
 
       if (ctx->pf == nullptr || ctx->ip >= ctx->pf->size()) break;
 
-      Code* w = (*ctx->pf)[ctx->ip++].get();
+      Code* w = (*ctx->pf)[ctx->ip++];
       w->exec();
       if (ctx->rs.size() < rs_frame_start) break;
     }
@@ -2695,7 +2808,7 @@ static void _does(Code* c)
 {
   bool hit = false;
   SYS_MUTEX_LOCK(forth_mutex);
-  for (auto& w : dict[c->token]->pf) {
+  for (Code* w : ro_body(dict[c->token].w)) {
     if (hit) last->append(w);
     if (STRCMP(w->name, "does>") == 0) hit = true;
   }
@@ -2720,20 +2833,20 @@ static void _str(Code* c)
 
 static void _lit(Code* c)
 {
-  ss_push(c->q[0]);
+  ss_push(c->val);
 }
 
 #if USE_FLOAT
 static void _flit(Code* c)
 {
   FLit* fl = static_cast<FLit*>(c);
-  fs_push(fl->val);
+  fs_push(fl->fval);
 }
 #endif
 
 static void _var(Code* c)
 {
-  ss_push(c->q[0]);
+  ss_push(c->val);
 }
 
 static size_t rs_marker_pos()
@@ -2747,9 +2860,10 @@ static size_t rs_marker_pos()
 
 static void _locals_enter(Code* c)
 {
-  int total = (int)c->q[0];
-  int from_stack = (int)c->q[1];
-  int slot_start = (int)c->q[2];
+  Locals* lc = static_cast<Locals*>(c);
+  int total = lc->total;
+  int from_stack = lc->from_stack;
+  int slot_start = lc->slot_start;
 
   std::vector<DU> tmp(from_stack);
   for (int i = from_stack - 1; i >= 0; --i)
@@ -2774,14 +2888,14 @@ static void _locals_enter(Code* c)
 static void _local_fetch(Code* c)
 {
   size_t base = locals_base();
-  int slot = (int)c->q[0];
+  int slot = (int)c->val;
   ss_push(current_ctx->ls[(int)(base + (size_t)slot)]);
 }
 
 static void _local_store(Code* c)
 {
   size_t base = locals_base();
-  int slot = (int)c->q[0];
+  int slot = (int)c->val;
   DU v = ss_pop();
   current_ctx->ls[(int)(base + (size_t)slot)] = v;
 }
@@ -2798,9 +2912,10 @@ static size_t locals_base()
 #if USE_FLOAT
 static void _locals_enter_f(Code* c)
 {
-  int total = (int)c->q[0];
-  int from_stack = (int)c->q[1];
-  int slot_start = (int)c->q[2];
+  Locals* lc = static_cast<Locals*>(c);
+  int total = lc->total;
+  int from_stack = lc->from_stack;
+  int slot_start = lc->slot_start;
 
   std::vector<DF> tmp(from_stack);
   for (int i = from_stack - 1; i >= 0; --i)
@@ -2825,14 +2940,14 @@ static void _locals_enter_f(Code* c)
 static void _local_fetch_f(Code* c)
 {
   size_t base = locals_base_f();
-  int slot = (int)c->q[0];
+  int slot = (int)c->val;
   fs_push(current_ctx->lfs[(int)(base + (size_t)slot)]);
 }
 
 static void _local_store_f(Code* c)
 {
   size_t base = locals_base_f();
-  int slot = (int)c->q[0];
+  int slot = (int)c->val;
   DF v = fs_pop();
   current_ctx->lfs[(int)(base + (size_t)slot)] = v;
 }
@@ -2863,11 +2978,11 @@ static void _tor2(Code* c)
 static void _if(Code* c)
 {
   if (ss_pop()) {
-    for (auto& w : c->pf)
+    for (Code* w : ro_body(c))
       w->exec();
   }
   else {
-    for (auto& w : c->p1)
+    for (Code* w : ro_alt(c))
       w->exec();
   }
 }
@@ -2879,14 +2994,14 @@ static void _begin(Code* c)
   size_t rs_depth = ctx->rs.size();
   try {
     while (true) {
-      for (auto& w : c->pf) {
+      for (Code* w : ro_body(c)) {
         w->exec();
         if (ctx->rs.size() < rs_depth) return;
       }
       if (b == 0 && ss_pop() != 0) break;
       if (b == 1) continue;
       if (b == 2 && ss_pop() == 0) break;
-      for (auto& w : c->p1) {
+      for (Code* w : ro_alt(c)) {
         w->exec();
         if (ctx->rs.size() < rs_depth) return;
       }
@@ -2898,14 +3013,14 @@ static void _begin(Code* c)
 
 static void _loop(Code* c)
 {
-  if (!c->q.empty() && c->q[0] && current_ctx->rs[-1] == current_ctx->rs[-2]) {
+  if (c->val && current_ctx->rs[-1] == current_ctx->rs[-2]) {
     current_ctx->rs.pop();
     current_ctx->rs.pop();
     return;
   }
   try {
     while (true) {
-      for (auto& w : c->pf)
+      for (Code* w : ro_body(c))
         w->exec();
       if (current_ctx->rs.size() < 2) break;
       DU index = current_ctx->rs[-1] + 1;
@@ -2928,14 +3043,14 @@ static void _loop(Code* c)
 
 static void _plus_loop(Code* c)
 {
-  if (!c->q.empty() && c->q[0] && current_ctx->rs[-1] == current_ctx->rs[-2]) {
+  if (c->val && current_ctx->rs[-1] == current_ctx->rs[-2]) {
     current_ctx->rs.pop();
     current_ctx->rs.pop();
     return;
   }
   try {
     while (true) {
-      for (auto& w : c->pf)
+      for (Code* w : ro_body(c))
         w->exec();
       if (current_ctx->rs.size() < 2) break;
       DU n = ss_pop();
@@ -3004,7 +3119,7 @@ static void _see(Code* c)
   }
 
   if (c->xt == _lit) {
-    forth_print([&](std::ostringstream& os) { os << c->q[0] << " "; });
+    forth_print([&](std::ostringstream& os) { os << c->val << " "; });
     return;
   }
 
@@ -3061,26 +3176,27 @@ static void _see(Code* c)
 #endif
 
   const char* nm = c->name ? c->name : "";
-  if (strcmp(nm, "if") == 0) {
+  bool bran = c->type() == CodeType::BRAN;
+  if (bran && strcmp(nm, "if") == 0) {
     forth_print([&](std::ostringstream& os) { os << "if "; });
-    for (auto& w : c->pf)
-      _see(w.get());
-    if (c->stage == 1 && !c->p1.empty()) {
+    for (Code* w : ro_body(c))
+      _see(w);
+    if (c->stage == 1 && !ro_alt(c).empty()) {
       forth_print([&](std::ostringstream& os) { os << "else "; });
-      for (auto& w : c->p1)
-        _see(w.get());
+      for (Code* w : ro_alt(c))
+        _see(w);
     }
     forth_print([&](std::ostringstream& os) { os << "then "; });
     return;
   }
-  if (strcmp(nm, "begin") == 0) {
+  if (bran && strcmp(nm, "begin") == 0) {
     forth_print([&](std::ostringstream& os) { os << "begin "; });
-    for (auto& w : c->pf)
-      _see(w.get());
+    for (Code* w : ro_body(c))
+      _see(w);
     if (c->stage == 2) {
       forth_print([&](std::ostringstream& os) { os << "while "; });
-      for (auto& w : c->p1)
-        _see(w.get());
+      for (Code* w : ro_alt(c))
+        _see(w);
       forth_print([&](std::ostringstream& os) { os << "repeat "; });
     }
     else if (c->stage == 0) {
@@ -3091,13 +3207,13 @@ static void _see(Code* c)
     }
     return;
   }
-  if (strcmp(nm, "do") == 0) {
+  if (bran && strcmp(nm, "do") == 0) {
     forth_print([&](std::ostringstream& os) { os << "do "; });
     return;
   }
-  if (strcmp(nm, "loop") == 0 || strcmp(nm, "+loop") == 0) {
-    for (auto& w : c->pf)
-      _see(w.get());
+  if (bran && (strcmp(nm, "loop") == 0 || strcmp(nm, "+loop") == 0)) {
+    for (Code* w : ro_body(c))
+      _see(w);
     forth_print([&](std::ostringstream& os) { os << nm << " "; });
     return;
   }
@@ -3116,12 +3232,13 @@ static void see(Code* c)
   }
   forth_print([&](std::ostringstream& os) { os << ": " << c->name << " "; });
 
-  size_t n = c->pf.size();
-  if (n > 0 && c->pf[n - 1] && strcmp(c->pf[n - 1]->name, "exit") == 0) {
+  const CodeList& b = ro_body(c);
+  size_t n = b.size();
+  if (n > 0 && b[n - 1] && strcmp(b[n - 1]->name, "exit") == 0) {
     n--;
   }
   for (size_t i = 0; i < n; ++i) {
-    _see(c->pf[i].get());
+    _see(b[i]);
   }
   forth_print([&](std::ostringstream& os) { os << "; "; });
 }
@@ -3131,8 +3248,8 @@ static void words()
   const int WIDTH = 16;
   int x = 0;
   std::string output;
-  for (auto& w : dict) {
-    std::string name = w->name ? w->name : "";
+  for (auto& e : dict) {
+    std::string name = e.w->name ? e.w->name : "";
     output += "  " + name;
     x += (name.length() + 2);
     if (x > WIDTH) {
@@ -3174,7 +3291,7 @@ static void load(const char* fn)
 static Code* find(std::string s)
 {
   for (int i = dict.size() - 1; i >= 0; --i)
-    if (STRCMP(s.c_str(), dict[i]->name) == 0) return dict[i].get();
+    if (STRCMP(s.c_str(), dict[i].w->name) == 0) return dict[i].w;
   return nullptr;
 }
 
@@ -3264,9 +3381,9 @@ static void forth_core(std::string idiom)
       }
     }
     if (slot >= 0) {
-      auto c = std::make_shared<Code>(_local_fetch);
+      Code* c = new_node<Code>(_local_fetch);
       c->set_desc(idiom);
-      c->q.push((DU)slot);
+      c->val = (DU)slot;
       last->append(c);
       SYS_MUTEX_UNLOCK(forth_mutex);
       return;
@@ -3279,9 +3396,9 @@ static void forth_core(std::string idiom)
       }
     }
     if (slot >= 0) {
-      auto c = std::make_shared<Code>(_local_fetch_f);
+      Code* c = new_node<Code>(_local_fetch_f);
       c->set_desc(idiom);
-      c->q.push((DU)slot);
+      c->val = (DU)slot;
       last->append(c);
       SYS_MUTEX_UNLOCK(forth_mutex);
       return;
@@ -3299,10 +3416,7 @@ static void forth_core(std::string idiom)
     if (compile) {
       if (!w->immd) {
         SYS_MUTEX_LOCK(forth_mutex);
-        if (w == compiling_root())
-          last->append(unowned_ref(w));
-        else
-          last->append(w);
+        last->append(w);
         SYS_MUTEX_UNLOCK(forth_mutex);
       }
       else {
@@ -3321,8 +3435,8 @@ static void forth_core(std::string idiom)
   if (auto dbl = parse_double(idiom)) {
     if (compile) {
       SYS_MUTEX_LOCK(forth_mutex);
-      last->append(std::make_shared<Lit>(dbl->first));
-      last->append(std::make_shared<Lit>(dbl->second));
+      last->append(new_node<Lit>(dbl->first));
+      last->append(new_node<Lit>(dbl->second));
       SYS_MUTEX_UNLOCK(forth_mutex);
     }
     else {
@@ -3335,7 +3449,7 @@ static void forth_core(std::string idiom)
   if (auto fval = parse_float(idiom)) {
     if (compile) {
       SYS_MUTEX_LOCK(forth_mutex);
-      last->append(std::make_shared<FLit>(*fval));
+      last->append(new_node<FLit>(*fval));
       SYS_MUTEX_UNLOCK(forth_mutex);
     }
     else {
@@ -3348,7 +3462,7 @@ static void forth_core(std::string idiom)
   if (!n) throw std::runtime_error("Undefined word");
   if (compile) {
     SYS_MUTEX_LOCK(forth_mutex);
-    last->append(std::make_shared<Lit>(*n));
+    last->append(new_node<Lit>(*n));
     SYS_MUTEX_UNLOCK(forth_mutex);
   }
   else {
@@ -3391,110 +3505,110 @@ const T& FV<T>::operator[](int i) const
   return std::vector<T>::operator[](i < 0 ? (this->size() + i) : i);
 }
 
-Code::Code(const char* s, const char* d, XT fp, U32 a)
-  : name(s),
-    desc(d),
-    xt(fp),
-    attr(a)
-{
-}
-
-Code::Code(std::string s, bool n)
+Code::Code(const std::string& s, bool n)
+  : Code((XT) nullptr)
 {
   Code* w = find(s);
   set_name(s);
-  desc = "";
   xt = w ? w->xt : nullptr;
-  attr = 0;
   token = n ? dict.size() : 0;
-  heap_mark = heap_ptr;
   if (n && w) {
     forth_print([&](std::ostringstream& os) { os << "redefined " << s << " "; });
   }
 }
 
 Code::Code(XT fp)
-  : name(""),
-    xt(fp),
-    attr(0)
+  : Code("", "", fp, 0)
 {
 }
 
 Code* Code::append(Code* w)
 {
-  return append(w->shared_from_this());
+  if (!pf) pf = new CodeList();
+  pf->push(w);
+  return this;
 }
 
-Code* Code::append(std::shared_ptr<Code> w)
+static char* dup_str(const std::string& s)
 {
-  pf.push(w);
-  return this;
+  char* p = (char*)malloc(s.size() + 1);
+  if (!p) throw std::runtime_error("Out of memory");
+  memcpy(p, s.c_str(), s.size() + 1);
+  return p;
 }
 
 void Code::set_name(const std::string& s)
 {
-  name_buf = std::make_unique<char[]>(s.size() + 1);
-  memcpy(name_buf.get(), s.c_str(), s.size() + 1);
-  name = name_buf.get();
+  if (owns_name) free((void*)name);
+  name = dup_str(s);
+  owns_name = 1;
 }
 
 void Code::set_desc(const std::string& s)
 {
-  desc_buf = std::make_unique<char[]>(s.size() + 1);
-  memcpy(desc_buf.get(), s.c_str(), s.size() + 1);
-  desc = desc_buf.get();
+  if (owns_desc) free((void*)desc);
+  desc = dup_str(s);
+  owns_desc = 1;
 }
 
 Comment::Comment(const std::string& text, bool dot)
   : Code(_comment)
 {
-  code_type = CodeType::COMMENT;
+  set_type(CodeType::COMMENT);
   name = dot ? ".(" : "(";
   set_desc(text);
 }
 
 Tmp::Tmp()
-  : Code(NULL)
+  : Code((XT) nullptr)
 {
-  code_type = CodeType::TMP;
+  set_type(CodeType::TMP);
 }
 
 Lit::Lit(DU d)
   : Code(_lit)
 {
-  code_type = CodeType::LIT;
-  q.push(d);
+  set_type(CodeType::LIT);
+  val = d;
 }
 
 #if USE_FLOAT
 FLit::FLit(DF v)
   : Code(_flit),
-    val(v)
+    fval(v)
 {
-  code_type = CodeType::FLIT;
+  set_type(CodeType::FLIT);
 }
 #endif
 
 Var::Var(DU d)
   : Code(_var)
 {
-  code_type = CodeType::VAR;
-  q.push(d);
+  set_type(CodeType::VAR);
+  val = d;
 }
 
-Str::Str(std::string s, int tok, int len, bool output)
+Str::Str(const std::string& s, int tok, int len, bool output)
   : Code(_str)
 {
-  code_type = CodeType::STR;
+  set_type(CodeType::STR);
   name = output ? ".\"" : "s\"";
   set_desc(s);
-  token = (len << 16) | tok;
+  val = (len << 16) | tok;
+}
+
+Locals::Locals(XT fp, int t, int f, int s)
+  : Code(fp),
+    total((U16)t),
+    from_stack((U16)f),
+    slot_start((U16)s)
+{
 }
 
 Bran::Bran(XT fp)
   : Code(fp)
 {
-  code_type = CodeType::BRAN;
+  set_type(CodeType::BRAN);
   if (fp == _tor2)
     name = "do";
   else if (fp == _loop)

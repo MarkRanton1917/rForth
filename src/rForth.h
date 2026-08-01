@@ -10,6 +10,22 @@
 #include <memory>
 #include <atomic>
 
+#ifndef CASE_SENSITIVE
+#define CASE_SENSITIVE 1
+#endif
+
+#ifndef PAD_SIZE
+#define PAD_SIZE 64
+#endif
+
+#ifndef HEAP_SIZE
+#define HEAP_SIZE 8192
+#endif
+
+#ifndef USE_FLOAT
+#define USE_FLOAT 0
+#endif
+
 #ifndef STR_BUF_COUNT
 #define STR_BUF_COUNT 2
 #endif
@@ -20,6 +36,10 @@
 
 #ifndef NUM_BUF_SIZE
 #define NUM_BUF_SIZE (sizeof(DU) * 16 + 2)
+#endif
+
+#ifndef KEEP_COMMENTS
+#define KEEP_COMMENTS 0
 #endif
 
 #define DU0 0
@@ -79,8 +99,9 @@ struct FV : public std::vector<T> {
 
 struct Code;
 typedef void (*XT)(Code*);
+typedef FV<Code*> CodeList;
 
-enum class CodeType {
+enum class CodeType : U32 {
   WORD,
   COMMENT,
   TMP,
@@ -91,34 +112,48 @@ enum class CodeType {
   BRAN
 };
 
-struct Code : std::enable_shared_from_this<Code> {
+struct Code {
   const static U32 IMMD_FLAG = 0x80000000;
   const static U32 COMPILE_ONLY_FLAG = 0x40000000;
   const char* name;
-  const char* desc = "";
+  const char* desc;
   XT xt;
-  FV<std::shared_ptr<Code>> pf;
-  FV<std::shared_ptr<Code>> p1;
-  FV<std::shared_ptr<Code>> p2;
-  FV<DU> q;
   union {
     U32 attr;
     struct {
-      U32 token        :28;
+      U32 token        :22;
+      U32 owns_name    :1;
+      U32 owns_desc    :1;
+      U32 code_type    :4;
       U32 stage        :2;
       U32 compile_only :1;
       U32 immd         :1;
     };
   };
-  CodeType code_type = CodeType::WORD;
-  size_t heap_mark = 0;
-  std::unique_ptr<char[]> name_buf;
-  std::unique_ptr<char[]> desc_buf;
-  Code(const char* s, const char* d, XT fp, U32 a);
-  Code(const std::string s, bool n = true);
+  DU val;
+  CodeList* pf;
+  CodeList* p1;
+  constexpr Code(const char* s, const char* d, XT fp, U32 a)
+    : name(s),
+      desc(d),
+      xt(fp),
+      attr(a),
+      val(0),
+      pf(nullptr),
+      p1(nullptr)
+  {
+  }
+  Code(const std::string& s, bool n = true);
   Code(XT fp);
+  CodeType type() const
+  {
+    return (CodeType)code_type;
+  }
+  void set_type(CodeType t)
+  {
+    code_type = (U32)t;
+  }
   Code* append(Code* w);
-  Code* append(std::shared_ptr<Code> w);
   void exec();
   void set_name(const std::string& s);
   void set_desc(const std::string& s);
@@ -138,7 +173,7 @@ struct Lit : Code {
 
 #if USE_FLOAT
 struct FLit : Code {
-  DF val;
+  DF fval;
   FLit(DF v);
 };
 #endif
@@ -148,11 +183,18 @@ struct Var : Code {
 };
 
 struct Str : Code {
-  Str(std::string s, int tok = 0, int len = 0, bool print = false);
+  Str(const std::string& s, int tok = 0, int len = 0, bool print = false);
 };
 
 struct Bran : Code {
   Bran(XT fp);
+};
+
+struct Locals : Code {
+  U16 total;
+  U16 from_stack;
+  U16 slot_start;
+  Locals(XT fp, int t, int f, int s);
 };
 
 struct ForthContext {
@@ -163,7 +205,7 @@ struct ForthContext {
   FV<DF> fs;
   FV<DF> lfs;
 #endif
-  const FV<std::shared_ptr<Code>>* pf;
+  const CodeList* pf;
   size_t ip;
   FV<Code*> call_stack;
   Code* xt;

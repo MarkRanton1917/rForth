@@ -80,11 +80,6 @@ create buf 64 allot
 ;
 
 : t-numbers ( -- )
-  s" 1A" parse-hex {: v ok :}
-  ok v 26 = and s" parse-hex" check
-  s" deadbeef" parse-hex drop $deadbeef = s" parse-hex long" check
-  s" 1G" parse-hex nip 0= s" parse-hex rejects" check
-  s" " parse-hex nip 0= s" parse-hex rejects empty" check
   -42 buf n>str s" -42" str= s" n>str negative" check
   42 buf n>str s" 42" str= s" n>str positive" check
   0 buf n>str s" 0" str= s" n>str zero" check
@@ -102,17 +97,7 @@ create buf 64 allot
   pad n s" scratch" str= s" pictured output leaves pad alone" check
 ;
 
-: t-utf8 ( -- )
-  s" Привет" u8-len 6 = s" u8-len" check
-  s" hello" u8-len 5 = s" u8-len ascii" check
-  s" Привет" 3 u8-trunc nip 6 = s" u8-trunc keeps sequences" check
-  s" Привет" 99 u8-trunc nip 12 = s" u8-trunc clamps" check
-  s" Привет" 0 u8-trunc nip 0= s" u8-trunc zero" check
-  s" П" drop u8-size 2 = s" u8-size two byte" check
-  s" a" drop u8-size 1 = s" u8-size ascii" check
-;
-
-t-slice t-compare t-fill t-index t-split t-search t-prefix t-build t-numbers t-case t-buffers t-utf8
+t-slice t-compare t-fill t-index t-split t-search t-prefix t-build t-numbers t-case t-buffers
 
 \ Interpreted, where s" hands out a transient buffer instead of compiling a literal.
 s" abc" s" abd" str= 0= s" interpreted literals do not alias" check

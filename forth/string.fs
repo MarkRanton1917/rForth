@@ -133,64 +133,9 @@
   dlen len +
 ;
 
-: hex-digit ( c -- n | -1 )
-  {: c -- n :}
-  -1 -> n
-  c ascii 0 >= c ascii 9 <= and if c ascii 0 - -> n then
-  c ascii a >= c ascii f <= and if c ascii a - 10 + -> n then
-  c ascii A >= c ascii F <= and if c ascii A - 10 + -> n then
-  n
-;
-
-\ Independent of base, unlike number?, which reads whatever base happens to be current.
-: parse-hex ( a u -- n flag )
-  {: a u -- acc d bad :}
-  u 0= if -1 -> bad then
-  u 0 ?do
-    a i + c@ hex-digit -> d
-    d 0< if -1 -> bad leave then
-    acc 4 lshift d or -> acc
-  loop
-  bad if 0 0 else acc -1 then
-;
-
 : n>str ( n dst -- dst len )
   {: n dst -- a len :}
   <# n abs #s n sign #> -> len -> a
   dst a len memcpy
   dst len
-;
-
-: u8-size ( a -- n )
-  {: a -- c n :}
-  a c@ -> c
-  1 -> n
-  c $E0 and $C0 = if 2 -> n then
-  c $F0 and $E0 = if 3 -> n then
-  c $F8 and $F0 = if 4 -> n then
-  n
-;
-
-: u8-len ( a u -- n )
-  {: a u -- i n :}
-  begin i u < while
-    a i + c@ $C0 and $80 <> if n 1+ -> n then
-    i 1+ -> i
-  repeat
-  n
-;
-
-: u8-trunc ( a u n -- a u' )
-  {: a u n -- i chars sz done :}
-  begin
-    done invert i u < and chars n < and
-  while
-    a i + u8-size -> sz
-    i sz + u > if
-      -1 -> done
-    else
-      i sz + -> i  chars 1+ -> chars
-    then
-  repeat
-  a i
 ;

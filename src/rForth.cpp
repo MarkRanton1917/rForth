@@ -1740,8 +1740,6 @@ static const Code rom[] = {
     {
       SYS_MUTEX_TYPE m = (SYS_MUTEX_TYPE)(UFP)ss_pop();
       if (!m) throw std::runtime_error("Invalid mutex");
-      // Drop the innermost record of this mutex rather than the last record overall: two
-      // different mutexes may be held at once and released in any order.
       FV<void*>& held = current_ctx->mux;
       auto it = std::find(held.rbegin(), held.rend(), (void*)m);
       if (it == held.rend()) throw std::runtime_error("Mutex not held");
@@ -2420,9 +2418,6 @@ static void backtrace()
   });
 }
 
-// Gives back every mutex the context took above `depth`, innermost first. A recursive mutex is
-// owned by the task that took it, so this only ever runs on that task's own stack: inside catch,
-// at the end of forth_task_entry, and in the outer interpreter's error handler.
 static void release_mutexes(ForthContext* ctx, size_t depth)
 {
   while (ctx->mux.size() > depth) {
@@ -2465,8 +2460,6 @@ static void forth_task_entry(void* pvParameters)
     abort_requested.store(true);
   }
 
-  // Covers the normal exit too: a task that ends still holding a mutex is a bug in the script,
-  // but leaving it locked would take down every other task with it.
   release_mutexes(ctx, 0);
 
   ctx->finished = true;
@@ -2849,28 +2842,27 @@ static void _if(Code* c)
   }
 }
 
-// The loop itself is native C++, so an exit inside the body cannot break out of it on its own:
-// unnest() drops the word's frame and retargets pf/ip at the caller, and without the checks below
-// this loop would go on running words - reading locals whose frame no longer exists. Same guard
-// Code::exec() uses for a word body: the return stack falling below its entry depth means the
-// frame we were running in is gone.
 static void _begin(Code* c)
 {
   int b = c->stage;
   ForthContext* ctx = current_ctx;
   size_t rs_depth = ctx->rs.size();
-  while (true) {
-    for (auto& w : c->pf) {
-      w->exec();
-      if (ctx->rs.size() < rs_depth) return;
+  try {
+    while (true) {
+      for (auto& w : c->pf) {
+        w->exec();
+        if (ctx->rs.size() < rs_depth) return;
+      }
+      if (b == 0 && ss_pop() != 0) break;
+      if (b == 1) continue;
+      if (b == 2 && ss_pop() == 0) break;
+      for (auto& w : c->p1) {
+        w->exec();
+        if (ctx->rs.size() < rs_depth) return;
+      }
     }
-    if (b == 0 && ss_pop() != 0) break;
-    if (b == 1) continue;
-    if (b == 2 && ss_pop() == 0) break;
-    for (auto& w : c->p1) {
-      w->exec();
-      if (ctx->rs.size() < rs_depth) return;
-    }
+  }
+  catch (int) {
   }
 }
 

@@ -969,9 +969,11 @@ static const Code rom[] = {
       }
       else {
         int len = s.length();
-        if ((size_t)len + 1 > PAD_SIZE) throw std::runtime_error("PAD overflow");
-        memcpy(current_ctx->pad, s.c_str(), len + 1);
-        ss_push((DU)current_ctx->pad);
+        if ((size_t)len + 1 > STR_BUF_SIZE) throw std::runtime_error("String buffer overflow");
+        char* buf = current_ctx->str_buf[current_ctx->str_buf_idx];
+        current_ctx->str_buf_idx = (current_ctx->str_buf_idx + 1) % STR_BUF_COUNT;
+        memcpy(buf, s.c_str(), len + 1);
+        ss_push((DU)buf);
         ss_push(len);
       }
     }),
@@ -1003,50 +1005,50 @@ static const Code rom[] = {
       abort_requested.store(true);
       throw std::runtime_error("Aborted");
     }),
-  CODE("<#", { current_ctx->pad_ptr = PAD_SIZE - 1; }),
+  CODE("<#", { current_ctx->num_ptr = NUM_BUF_SIZE - 1; }),
   CODE("#",
     {
       DU n = ss_pop();
       DU base = BASE;
       DU digit = n % base;
       n /= base;
-      if (current_ctx->pad_ptr == 0) throw std::runtime_error("PAD overflow");
+      if (current_ctx->num_ptr == 0) throw std::runtime_error("Number buffer overflow");
       char ch = (digit < 10) ? (char)('0' + digit) : (char)('A' + digit - 10);
-      current_ctx->pad[--current_ctx->pad_ptr] = ch;
+      current_ctx->num_buf[--current_ctx->num_ptr] = ch;
       ss_push(n);
     }),
   CODE("#s",
     {
       DU n = ss_pop();
       DU base = BASE;
-      while (n != 0) {
+      do {
         DU digit = n % base;
         n /= base;
-        if (current_ctx->pad_ptr == 0) throw std::runtime_error("PAD overflow");
+        if (current_ctx->num_ptr == 0) throw std::runtime_error("Number buffer overflow");
         char ch = (digit < 10) ? (char)('0' + digit) : (char)('A' + digit - 10);
-        current_ctx->pad[--current_ctx->pad_ptr] = ch;
-      }
+        current_ctx->num_buf[--current_ctx->num_ptr] = ch;
+      } while (n != 0);
       ss_push(n);
     }),
   CODE("#>",
     {
       DU n = ss_pop();
       (void)n;
-      ss_push((DU)(current_ctx->pad + current_ctx->pad_ptr));
-      ss_push(PAD_SIZE - current_ctx->pad_ptr - 1);
+      ss_push((DU)(current_ctx->num_buf + current_ctx->num_ptr));
+      ss_push(NUM_BUF_SIZE - current_ctx->num_ptr - 1);
     }),
   CODE("hold",
     {
       char ch = (char)ss_pop();
-      if (current_ctx->pad_ptr == 0) throw std::runtime_error("PAD overflow");
-      current_ctx->pad[--current_ctx->pad_ptr] = ch;
+      if (current_ctx->num_ptr == 0) throw std::runtime_error("Number buffer overflow");
+      current_ctx->num_buf[--current_ctx->num_ptr] = ch;
     }),
   CODE("sign",
     {
       DU n = ss_pop();
       if (n < 0) {
-        if (current_ctx->pad_ptr == 0) throw std::runtime_error("PAD overflow");
-        current_ctx->pad[--current_ctx->pad_ptr] = '-';
+        if (current_ctx->num_ptr == 0) throw std::runtime_error("Number buffer overflow");
+        current_ctx->num_buf[--current_ctx->num_ptr] = '-';
       }
     }),
   ICOMP("if",
@@ -1656,8 +1658,8 @@ static const Code rom[] = {
       new_ctx->finished = false;
       new_ctx->handle = nullptr;
       new_ctx->active = true;
-      new_ctx->pad_ptr = PAD_SIZE - 1;
-      new_ctx->pad[PAD_SIZE - 1] = '\0';
+      new_ctx->num_ptr = NUM_BUF_SIZE - 1;
+      new_ctx->num_buf[NUM_BUF_SIZE - 1] = '\0';
       SYS_MUTEX_LOCK(forth_mutex);
       all_contexts.push_back(new_ctx);
       size_t idx = all_contexts.size() - 1;
@@ -2250,8 +2252,8 @@ void forth_init()
   ctx0->finished = false;
   ctx0->handle = nullptr;
   ctx0->active = true;
-  ctx0->pad_ptr = PAD_SIZE - 1;
-  ctx0->pad[PAD_SIZE - 1] = '\0';
+  ctx0->num_ptr = NUM_BUF_SIZE - 1;
+  ctx0->num_buf[NUM_BUF_SIZE - 1] = '\0';
   all_contexts.push_back(ctx0);
   current_ctx = ctx0;
 }

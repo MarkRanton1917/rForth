@@ -31,10 +31,12 @@ rforth/
 │   └── rForth.cpp        # Implementation of Forth interpreter
 ├── forth/
 │   ├── memory.fs         # Forth utility library for memory operations
+│   ├── string.fs         # Forth utility library for string operations
 │   └── tests/
 │       ├── task_test.fs      # Example task management in Forth
 │       ├── stress_test.fs    # Regression test for dictionary/forget memory handling
 │       ├── numbers_test.fs   # Example number parsing (single and double)
+│       ├── string_test.fs    # Self-checking regression test for string.fs
 │       └── file_test.fs      # Exercises the file-access word set end-to-end
 ├── examples/
 │   ├── esp32-usart.cpp   # ESP32 UART interface example
@@ -63,11 +65,40 @@ Configure the Forth interpreter with compile-time definitions:
 ```cmake
 add_compile_definitions(
   CASE_SENSITIVE=1        # 1=case-sensitive, 0=case-insensitive
-  PAD_SIZE=256            # Input buffer size
+  PAD_SIZE=256            # Scratch buffer available to the program through pad
+  STR_BUF_COUNT=2         # Transient buffers for interpreted s" (2 is the Forth-2012 minimum)
+  STR_BUF_SIZE=80         # Bytes per transient buffer (80 is the Forth-2012 minimum)
   HEAP_SIZE=65536         # Heap size in bytes
   USE_FLOAT=1             # 1=enable floating-point, 0=disable
 )
 ```
+
+`NUM_BUF_SIZE` (the pictured numeric output buffer) defaults to `2 * bits-per-cell + 2`, the
+standard minimum, and rarely needs overriding - raise it only if `hold` is used to build
+something much longer than a number.
+
+Each Forth context - the main one plus one per `task` - holds `PAD_SIZE` bytes of `pad`,
+`STR_BUF_COUNT * STR_BUF_SIZE` bytes of transient string buffers and `NUM_BUF_SIZE` bytes of
+number buffer, so these sizes are paid per task.
+
+### Buffers
+
+Three separate regions, none of which overlap:
+
+- **`pad`** belongs to the program. Nothing in the system writes to it, so a string parked there
+  survives anything else the interpreter does.
+- **Transient string buffers** back interpreted `s"`, handed out round-robin. With the default of
+  two, a pair of literals can be live at once:
+
+  ```forth
+  s" abc" s" abd" compare   \ each literal has its own buffer
+  ```
+
+  A third literal reuses the first buffer, so a string that must outlive the next `s"` has to be
+  copied (see `str!` in `forth/string.fs`). Compiled `s"` inside a definition is unaffected: it
+  carries its own copy. A literal longer than `STR_BUF_SIZE` raises `String buffer overflow`.
+- **Number buffer** holds what `<# ... #>` builds. Each `<#` restarts it, so the result of `#>`
+  has to be consumed or copied before the next conversion.
 
 ### Linux Build
 
@@ -373,7 +404,7 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 ### Number Output Formatting
 - `<# ( -- )` - Begin number formatting
 - `# ( n -- n/base )` - Format one digit
-- `#s ( n -- 0 )` - Format remaining digits
+- `#s ( n -- 0 )` - Format remaining digits, a single `0` when `n` is zero
 - `#> ( n -- addr len )` - End formatting, return address and length
 - `hold ( c -- )` - Add character to formatted number
 - `sign ( n -- )` - Add a `-` to the formatted number if `n` is negative (no effect otherwise)
@@ -388,7 +419,7 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `cells ( n -- bytes )` - Convert cell count to byte count
 - `allot ( n -- )` - Allocate n bytes in heap
 - `here ( -- addr )` - Get current heap pointer
-- `pad ( -- addr )` - Address of the current task's scratch buffer (same buffer `<#`/`hold`/`#>` and interpreted `s"` use)
+- `pad ( -- addr )` - Address of the current task's scratch buffer, `PAD_SIZE` bytes, used by nothing else in the system
 - `variable ( "name" -- )` - Create a variable (allocates one cell)
 - `constant ( n "name" -- )` - Create a constant
 - `fvariable ( "name" -- )` - Create floating-point variable (when USE_FLOAT=1)
@@ -563,6 +594,52 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `cdump ( n-bytes addr -- )` - Dump n bytes starting from address
 - `memset ( val n-cells addr -- )` - Fill n cells with value
 - `cmemset ( val n-bytes addr -- )` - Fill n bytes with value
+
+### String Utilities (forth/string.fs)
+
+Strings are `(addr len)` pairs. Requires `memory.fs`. Words that produce a string take the
+destination buffer as an argument, because `pad` holds the result of both `s"` and `<# ... #>`:
+two interpreted `s"` in a row return the same buffer.
+
+Character classification and case (ASCII only - applied byte by byte, so UTF-8 above U+007F is
+left alone rather than mangled):
+
+- `space? ( c -- flag )` - Space, tab, CR or LF
+- `upc ( c -- c' )` / `lwc ( c -- c' )` - Convert one character
+- `>upper ( a u -- )` / `>lower ( a u -- )` - Convert in place
+
+Slicing and comparison:
+
+- `/string ( a u n -- a' u' )` - Drop n leading bytes, clamped to the string
+- `-leading ( a u -- a' u' )` / `-trailing ( a u -- a u' )` / `trim ( a u -- a' u' )`
+- `compare ( a1 u1 a2 u2 -- n )` - -1, 0 or 1
+- `str= ( a1 u1 a2 u2 -- flag )` - Cheaper equality test
+- `blank ( a u -- )` / `erase ( a u -- )` - Fill with spaces or zeros
+
+Searching and splitting:
+
+- `char-index ( a u c -- i | -1 )` - Offset of the first occurrence
+- `split ( a u c -- head hlen tail tlen )` - Around the first separator; without one the whole
+  string is the head and the tail is empty
+- `search ( a1 u1 a2 u2 -- a3 u3 flag )` - Substring; on failure returns the string unchanged
+- `starts-with? ( a1 u1 a2 u2 -- flag )` / `ends-with? ( a1 u1 a2 u2 -- flag )`
+
+Building:
+
+- `str! ( src len dst -- len )` - Copy into a buffer
+- `str+ ( src len dst dlen -- len' )` - Append to what is already there
+
+Numbers:
+
+- `hex-digit ( c -- n | -1 )`
+- `parse-hex ( a u -- n flag )` - Independent of `base`, unlike `number?`
+- `n>str ( n dst -- dst len )` - Signed, in the current base
+
+UTF-8:
+
+- `u8-size ( a -- n )` - Length of the sequence starting at a byte
+- `u8-len ( a u -- n )` - Characters rather than bytes
+- `u8-trunc ( a u n -- a u' )` - Cut to n characters without splitting a sequence
 
 ## Macros for Defining Words
 

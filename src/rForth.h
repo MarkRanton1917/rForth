@@ -9,6 +9,18 @@
 #include <cstdint>
 #include <memory>
 
+#ifndef STR_BUF_COUNT
+#define STR_BUF_COUNT 2
+#endif
+
+#ifndef STR_BUF_SIZE
+#define STR_BUF_SIZE 80
+#endif
+
+#ifndef NUM_BUF_SIZE
+#define NUM_BUF_SIZE (sizeof(DU) * 16 + 2)
+#endif
+
 #define DU0 0
 #define DU1 1
 #define UINT(v) (static_cast<U32>(v))
@@ -158,7 +170,10 @@ struct ForthContext {
   void* handle;
   bool active;
   char pad[PAD_SIZE];
-  size_t pad_ptr;
+  char num_buf[NUM_BUF_SIZE];
+  size_t num_ptr;
+  char str_buf[STR_BUF_COUNT][STR_BUF_SIZE];
+  size_t str_buf_idx = 0;
   int key_peek = INPUT_NONE;
   FV<void*> mux;
 };

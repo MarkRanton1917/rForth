@@ -2436,6 +2436,14 @@ static void forth_task_entry(void* pvParameters)
     ctx->call_stack.push_back(ctx->xt);
   }
 
+  ctx->rs.push_back(WORD_MARKER_FRAME);
+  ctx->rs.push_back(0);
+  ctx->rs.push_back(0);
+  ctx->rs.push_back(0);
+#if USE_FLOAT
+  ctx->rs.push_back(0);
+#endif
+
   try {
     while (true) {
       if (!ctx->pf || ctx->ip >= ctx->pf->size()) break;
@@ -2465,6 +2473,11 @@ static void forth_task_entry(void* pvParameters)
   ctx->finished = true;
   ctx->pf = nullptr;
   ctx->ip = 0;
+  ctx->rs.clear();
+  ctx->ls.clear();
+#if USE_FLOAT
+  ctx->lfs.clear();
+#endif
 
 #if ESP_PLATFORM
   ctx->handle = nullptr;

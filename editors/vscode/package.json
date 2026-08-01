@@ -1,0 +1,44 @@
+{
+  "name": "rforth",
+  "displayName": "rForth",
+  "description": "Syntax highlighting for rForth sources (.fs)",
+  "version": "0.1.0",
+  "publisher": "MarkRanton1917",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MarkRanton1917/rForth.git"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "rforth",
+        "aliases": [
+          "rForth",
+          "rforth"
+        ],
+        "extensions": [
+          ".fs",
+          ".fth",
+          ".4th",
+          ".forth"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "rforth",
+        "scopeName": "source.rforth",
+        "path": "./syntaxes/rforth.tmLanguage.json"
+      }
+    ]
+  }
+}

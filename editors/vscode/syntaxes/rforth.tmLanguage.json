@@ -1,0 +1,199 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "rForth",
+  "scopeName": "source.rforth",
+  "fileTypes": [
+    "fs",
+    "fth",
+    "4th",
+    "forth"
+  ],
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#colon-definition"
+    },
+    {
+      "include": "#defining-words"
+    },
+    {
+      "include": "#tick"
+    },
+    {
+      "include": "#locals"
+    },
+    {
+      "include": "#local-store"
+    },
+    {
+      "include": "#control"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#core-words"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "match": "(?<![^\\s])\\\\(?![^\\s]).*$",
+          "name": "comment.line.backslash.rforth"
+        },
+        {
+          "begin": "(?<![^\\s])\\((?![^\\s])",
+          "end": "\\)",
+          "name": "comment.block.parenthesis.rforth",
+          "patterns": [
+            {
+              "match": "(?<![^\\s])--(?![^\\s])",
+              "name": "punctuation.separator.stack-effect.rforth"
+            }
+          ]
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "begin": "(?<![^\\s])(s\"|\\.\"|abort\")(?=\\s|\")",
+          "end": "(\")",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.definition.string.begin.rforth"
+            }
+          },
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.string.end.rforth"
+            }
+          },
+          "name": "string.quoted.double.rforth"
+        },
+        {
+          "begin": "(?<![^\\s])(\\.\\()",
+          "end": "(\\))",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.definition.string.begin.rforth"
+            }
+          },
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.string.end.rforth"
+            }
+          },
+          "name": "string.other.print.rforth"
+        }
+      ]
+    },
+    "colon-definition": {
+      "match": "(?<![^\\s])(:)\\s+(\\S+)",
+      "captures": {
+        "1": {
+          "name": "keyword.control.definition.rforth"
+        },
+        "2": {
+          "name": "entity.name.function.rforth"
+        }
+      }
+    },
+    "defining-words": {
+      "match": "(?<![^\\s])(2constant|2variable|fconstant|fvariable|constant|variable|create|forget|mutex|task|see)\\s+(\\S+)",
+      "captures": {
+        "1": {
+          "name": "storage.type.rforth"
+        },
+        "2": {
+          "name": "entity.name.function.rforth"
+        }
+      }
+    },
+    "tick": {
+      "match": "(?<![^\\s])('|\\['\\])\\s+(\\S+)",
+      "captures": {
+        "1": {
+          "name": "keyword.operator.tick.rforth"
+        },
+        "2": {
+          "name": "entity.name.function.rforth"
+        }
+      }
+    },
+    "locals": {
+      "begin": "(?<![^\\s])(f?\\{:)(?![^\\s])",
+      "end": "(?<![^\\s])(f?:\\})(?![^\\s])",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.other.locals.rforth"
+        }
+      },
+      "endCaptures": {
+        "1": {
+          "name": "keyword.other.locals.rforth"
+        }
+      },
+      "name": "meta.locals.rforth",
+      "patterns": [
+        {
+          "match": "(?<![^\\s])--(?![^\\s])",
+          "name": "punctuation.separator.stack-effect.rforth"
+        },
+        {
+          "match": "\\S+",
+          "name": "variable.parameter.rforth"
+        }
+      ]
+    },
+    "local-store": {
+      "match": "(?<![^\\s])(f?->)\\s+(\\S+)",
+      "captures": {
+        "1": {
+          "name": "keyword.operator.assignment.rforth"
+        },
+        "2": {
+          "name": "variable.parameter.rforth"
+        }
+      }
+    },
+    "control": {
+      "match": "(?<![^\\s])(?:immediate|included|execute|repeat|resume|\\+loop|abort|again|begin|catch|delay|does>|leave|pause|throw|until|while|boot|else|exit|loop|stop|then|\\?do|bye|do|if|ms|;)(?![^\\s])",
+      "name": "keyword.control.rforth"
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "match": "(?<![^\\s])[+-]?(?:(?:\\d+\\.\\d*|\\.\\d+)(?:[eE][+-]?\\d+|[eE])?|\\d+(?:[eE][+-]?\\d+|[eE]))(?![^\\s])",
+          "name": "constant.numeric.float.rforth"
+        },
+        {
+          "match": "(?<![^\\s])[$][+-]?[0-9a-fA-F]+(?![^\\s])",
+          "name": "constant.numeric.hex.rforth"
+        },
+        {
+          "match": "(?<![^\\s])%[+-]?[01]+(?![^\\s])",
+          "name": "constant.numeric.binary.rforth"
+        },
+        {
+          "match": "(?<![^\\s])[#&][+-]?\\d+(?![^\\s])",
+          "name": "constant.numeric.decimal.rforth"
+        },
+        {
+          "match": "(?<![^\\s])[+-]?\\d+(?![^\\s])",
+          "name": "constant.numeric.integer.rforth"
+        }
+      ]
+    },
+    "core-words": {
+      "match": "(?<![^\\s])(?:reposition\\-file|file\\-position|create\\-file|delete\\-file|close\\-file|write\\-file|write\\-line|file\\-size|open\\-file|read\\-file|read\\-line|acquire|active\\?|decimal|dnegate|fnegate|number\\?|release|accept|facosh|fasinh|fatan2|fatanh|floats|fround|invert|lshift|negate|number|rshift|spaces|\\*/mod|2drop|2over|2swap|allot|ascii|cells|depth|facos|falog|fasin|fatan|fcosh|fdrop|floor|fover|fpick|fsinh|fsqrt|fswap|ftanh|ftuck|space|words|\\-rot|/mod|2dup|\\?dup|base|d0<=|d0<>|d0>=|dabs|dmax|dmin|drop|emit|f0<=|f0<>|f0>=|fabs|fcos|fdup|fexp|flog|fmax|fmin|fnip|frot|fsin|ftan|here|hold|key\\?|over|pick|sign|swap|tuck|type|0<=|0<>|0>=|1/f|abs|and|d0<|d0=|d0>|d<=|d<>|d>=|d>f|d>s|dup|f\\*\\*|f\\.r|f\\.s|f0<|f0=|f0>|f<=|f<>|f>=|f>d|f>s|fln|hex|key|max|min|mod|nip|pad|r/o|r/w|rnd|rot|s>d|s>f|u\\.r|u<=|u<>|u>=|w/o|xor|\\#>|\\#s|\\*/|\\+!|\\.r|\\.s|0<|0=|0>|1\\+|1\\-|2!|2\\*|2/|2@|<\\#|<=|<>|>=|>r|bl|c!|c@|cr|d\\+|d\\-|d\\.|d<|d=|d>|f!|f\\*|f\\+|f\\-|f\\.|f/|f<|f=|f>|f@|f\\~|or|pi|r>|r@|u<|u=|u>|!|\\#|\\*|\\+|,|\\-|\\.|/|<|=|>|\\?|@|\\[|\\]|i|j)(?![^\\s])",
+      "name": "support.function.rforth"
+    }
+  }
+}

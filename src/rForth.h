@@ -42,6 +42,10 @@
 #define KEEP_COMMENTS 0
 #endif
 
+#ifndef TASK_STACK_MIN
+#define TASK_STACK_MIN 2048
+#endif
+
 #define DU0 0
 #define DU1 1
 #define UINT(v) (static_cast<U32>(v))
@@ -209,6 +213,8 @@ struct ForthContext {
   size_t ip;
   FV<Code*> call_stack;
   Code* xt;
+  size_t id = 0;
+  size_t stack_size = TASK_STACK_MIN;
   bool finished;
   void* handle;
   bool active;

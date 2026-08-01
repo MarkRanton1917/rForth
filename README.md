@@ -73,6 +73,7 @@ add_compile_definitions(
   HEAP_SIZE=16384         # Data-space size in bytes                      (default 8192)
   USE_FLOAT=1             # 1=enable floating-point, 0=disable            (default 0)
   KEEP_COMMENTS=0         # 1=keep `( ... )` inside definitions so SEE can print them (default 0)
+  TASK_STACK_MIN=2048     # Smallest stack `task` accepts, in bytes         (default 2048)
 )
 ```
 
@@ -89,7 +90,8 @@ something much longer than a number.
 
 Each Forth context - the main one plus one per `task` - holds `PAD_SIZE` bytes of `pad`,
 `STR_BUF_COUNT * STR_BUF_SIZE` bytes of transient string buffers and `NUM_BUF_SIZE` bytes of
-number buffer, so these sizes are paid per task.
+number buffer, so these sizes are paid per task. The task stack is on top of that and is chosen
+per task by `task` itself; `TASK_STACK_MIN` only sets the floor it refuses to go below.
 
 ### Buffers
 
@@ -194,7 +196,7 @@ See `examples/linux.cpp` and `examples/esp32-usart.cpp` (`PosixForthFile`, POSIX
 \ Task creation (with threading support)
 variable tid
 : worker ." Starting task" cr ;
-' worker task tid !
+4096 ' worker task tid !
 
 \ Check if task is active
 tid @ active? if ." Task is running" cr then
@@ -483,9 +485,10 @@ Double numbers are a `lo hi` cell pair (same convention as `d>f`/`f>d`), letting
 - `bye ( -- )` - Exit Forth system
 
 ### Task Management
-- `task ( xt -- id )` - Create new task from execution token
+- `task ( bytes xt -- id )` - Create new task from execution token, with a stack of `bytes` bytes
 - `active? ( id -- flag )` - Check if task is active
 - `resume ( id -- )` - Resume suspended task
+- `self ( -- id )` - Get the id of the task running the word
 - `stop ( id -- )` - Stop a task, including the caller's own
 - `mutex ( "name" -- )` - Create a recursive mutex; the new word pushes its handle
 - `aсquire ( m -- )` - Take the mutex, blocking until it is free
@@ -712,11 +715,25 @@ rForth uses the traditional Forth stack model:
 
 rForth provides built-in words for task management:
 
-- **`task ( xt -- id )`** - Create a new task from execution token (xt), returns task ID
+- **`task ( bytes xt -- id )`** - Create a new task from execution token (xt) with a stack of `bytes` bytes, returns task ID
 - **`active? ( id -- flag )`** - Check if task with given ID is active (true/-1 or false/0)
 - **`pause ( -- )`** - Yield control to other tasks
 - **`resume ( id -- )`** - Resume a suspended task
+- **`self ( -- id )`** - Push the id of the task that runs the word
 - **`stop ( id -- )`** - Stop a task, its own id included
+
+The stack size passed to `task` is in bytes and belongs to that task alone, so a word that only
+blinks an LED can run in far less than one that formats floats or opens files. Anything below
+`TASK_STACK_MIN` (2048 bytes by default) is refused with `Stack too small`, since the interpreter
+loop itself needs room. `resume` re-creates a finished task with the same stack it was given
+originally. On ESP32 the size is what FreeRTOS allocates; on Linux `std::thread` uses the system
+default and the number is only validated, not applied.
+
+```forth
+variable tid
+: worker begin 100 delay again ;
+8192 ' worker task tid !     \ this one parses and prints, give it room
+```
 
 Stopping is cooperative: the target notices the request between two words, or inside `delay`
 within 10 ms, and unwinds itself, so the mutexes it held are released. It is therefore not
@@ -726,10 +743,26 @@ interpreter itself and cannot be stopped.
 ```forth
 variable tid
 : worker begin 50 delay again ;
-' worker task tid !
+4096 ' worker task tid !
 tid @ stop
 tid @ active?   \ 0
 ```
+
+A task does not need to know the variable its creator stored the id in - `self` gives it its own
+id, so it can quit from anywhere inside its own call tree, `catch` included:
+
+```forth
+: worker
+  begin
+    poll-sensor sensor-broken? if self stop then
+    100 delay
+  again
+;
+4096 ' worker task drop
+```
+
+`self stop` unwinds the task immediately - the words after it never run. In the interpreter
+`self` pushes 0, so `self stop` there fails with "Cannot stop the main task".
 
 ### Multitasking Example
 
@@ -741,8 +774,8 @@ variable tid2
 : task2 10 0 do ." Task 2: " i . cr 150 delay loop ;
 
 : main
-  ' task1 task tid1 !
-  ' task2 task tid2 !
+  4096 ' task1 task tid1 !
+  4096 ' task2 task tid2 !
   begin
     pause
     tid1 @ active? 0= tid2 @ active? 0= and

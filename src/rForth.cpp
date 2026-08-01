@@ -1754,6 +1754,7 @@ static constexpr Code rom[] = {
         if (interrupt_requested.exchange(false)) throw std::runtime_error("User interrupt");
       }
     }),
+  CODE("self", ss_push((DU)current_ctx->id)),
   CODE("stop",
     {
       DU id = ss_pop();
@@ -1775,7 +1776,10 @@ static constexpr Code rom[] = {
       DU xt_addr = ss_pop();
       Code* xt = reinterpret_cast<Code*>(xt_addr);
       if (!xt) throw std::runtime_error("Invalid xt for task");
+      DU stack = ss_pop();
+      if (stack < TASK_STACK_MIN) throw std::runtime_error("Stack too small");
       ForthContext* new_ctx = new ForthContext();
+      new_ctx->stack_size = (size_t)stack;
       new_ctx->xt = xt;
       new_ctx->pf = xt->pf;
       new_ctx->ip = 0;
@@ -1787,8 +1791,9 @@ static constexpr Code rom[] = {
       SYS_MUTEX_LOCK(forth_mutex);
       all_contexts.push_back(new_ctx);
       size_t idx = all_contexts.size() - 1;
+      new_ctx->id = idx;
       SYS_MUTEX_UNLOCK(forth_mutex);
-      bool ok = SYS_TASK_CREATE(forth_task_entry, "ForthTask", 4096, new_ctx, 1, &new_ctx->handle);
+      bool ok = SYS_TASK_CREATE(forth_task_entry, "ForthTask", new_ctx->stack_size, new_ctx, 1, &new_ctx->handle);
       if (!ok) {
         delete new_ctx;
         throw std::runtime_error("Failed to create task");
@@ -1811,14 +1816,14 @@ static constexpr Code rom[] = {
         SYS_TASK_RESUME(ctx->handle);
       }
       else {
-        bool ok = SYS_TASK_CREATE(forth_task_entry, "ForthTask", 4096, ctx, 1, &ctx->handle);
+        bool ok = SYS_TASK_CREATE(forth_task_entry, "ForthTask", ctx->stack_size, ctx, 1, &ctx->handle);
         if (!ok) throw std::runtime_error("Failed to resume task");
       }
 #else
       if (ctx->handle == nullptr || ctx->finished) {
           ctx->finished = false;
           ctx->ip = 0;
-          bool ok = SYS_TASK_CREATE(forth_task_entry, "ForthTask", 4096, ctx, 1, &ctx->handle);
+          bool ok = SYS_TASK_CREATE(forth_task_entry, "ForthTask", ctx->stack_size, ctx, 1, &ctx->handle);
           if (!ok) throw std::runtime_error("Failed to resume task");
       }
 #endif

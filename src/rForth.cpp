@@ -164,21 +164,9 @@ static SYS_MUTEX_TYPE forth_mutex = nullptr;
 static std::atomic<bool> abort_requested { false };
 static std::string abort_message;
 static ForthContext* abort_ctx = nullptr;
-
-struct TaskStopped {};
-
 static int load_depth = 0;
 
-struct LoadDepth {
-  LoadDepth()
-  {
-    load_depth++;
-  }
-  ~LoadDepth()
-  {
-    load_depth--;
-  }
-};
+struct TaskStopped {};
 
 struct ForthThrown : std::runtime_error {
   DU code;
@@ -3278,13 +3266,12 @@ static void load(const char* fn)
   if (!f) throw std::runtime_error("Can't open file");
   char line[256];
   long n;
-  {
-    LoadDepth depth;
-    while ((n = f->read_line(line, sizeof(line) - 1)) >= 0) {
-      line[n] = '\0';
-      forth_interpret(line, cb);
-    }
+  load_depth++;
+  while ((n = f->read_line(line, sizeof(line) - 1)) >= 0) {
+    line[n] = '\0';
+    forth_interpret(line, cb);
   }
+  load_depth--;
   f->close();
   delete f;
 

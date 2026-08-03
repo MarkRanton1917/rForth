@@ -343,10 +343,10 @@ static constexpr Code rom[] = {
     }),
   CODE("*/",
     {
+      DU c = ss_pop();
       DU b = ss_pop();
       DU a = ss_pop();
-      DU c = ss_pop();
-      ss_push(a * b / c);
+      ss_push((DU)((DU2)a * b / c));
     }),
   CODE("/mod",
     {
@@ -358,9 +358,9 @@ static constexpr Code rom[] = {
     }),
   CODE("*/mod",
     {
+      DU c = ss_pop();
       DU b = ss_pop();
       DU a = ss_pop();
-      DU c = ss_pop();
       DU2 n = (DU2)a * b;
       DU2 m = MOD(n, c);
       ss_push((DU)m);

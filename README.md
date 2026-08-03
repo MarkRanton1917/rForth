@@ -295,9 +295,10 @@ All built-in words available in rForth, organized by category:
 - `* ( n1 n2 -- n )` - Multiply two numbers
 - `/ ( n1 n2 -- n )` - Divide: n1 / n2
 - `mod ( n1 n2 -- n )` - Modulo: n1 mod n2
-- `*/ ( n1 n2 n3 -- n )` - Multiply and divide: (n1 * n2) / n3
+- `*/ ( n1 n2 n3 -- n )` - Multiply and divide: (n1 * n2) / n3, keeping the product in a double
+  cell, so `n1 * n2` may exceed a cell as long as the quotient fits
 - `/mod ( n1 n2 -- rem quot )` - Both remainder and quotient
-- `*/mod ( n1 n2 n3 -- rem quot )` - (n1 * n2) mod n3, then quot
+- `*/mod ( n1 n2 n3 -- rem quot )` - (n1 * n2) mod n3, then quot, with the same double-cell product
 
 ### Double-Number Operations
 
